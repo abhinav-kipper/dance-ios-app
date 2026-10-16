@@ -26,6 +26,7 @@ enum LibrarySheet: Identifiable {
     case deleteOriginal(Original)
     case deleteFolder(Folder)
     case share(Clip)
+    case link(LinkSubject)
 
     var id: String {
         switch self {
@@ -34,6 +35,7 @@ enum LibrarySheet: Identifiable {
         case .deleteOriginal(let o): "delo-\(o.id)"
         case .deleteFolder(let f): "delf-\(f.id)"
         case .share(let c): "share-\(c.id)"
+        case .link(let s): "link-\(s.id)"
         }
     }
 
@@ -45,6 +47,7 @@ enum LibrarySheet: Identifiable {
         case .deleteOriginal(let original): DeleteOriginalSheet(original: original)
         case .deleteFolder(let folder): DeleteFolderSheet(folder: folder)
         case .share(let clip): ShareSheet(clip: clip)
+        case .link(let subject): LinkSheet(subject: subject)
         }
     }
 }

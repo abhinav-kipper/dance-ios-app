@@ -27,22 +27,7 @@ struct HomeView: View {
     var body: some View {
         NavigationStack(path: $path) {
             ScrollView {
-                VStack(alignment: .leading, spacing: 24) {
-                    header
-                    if folders.isEmpty && unsorted.isEmpty {
-                        emptyState
-                    } else {
-                        pinnedTiles
-                        if !folders.isEmpty {
-                            Text("Folders").sectionLabelStyle()
-                            LazyVGrid(columns: columns, spacing: 14) {
-                                ForEach(displayedFolders) { folder in
-                                    folderCell(folder)
-                                }
-                            }
-                        }
-                    }
-                }
+                libraryContent
                 .padding(.horizontal, Theme.gutter)
                 .padding(.top, 12)
                 .padding(.bottom, 140)
@@ -68,6 +53,7 @@ struct HomeView: View {
                 case .folder(let id): FolderView(folderID: id, path: $path)
                 case .unsorted: FolderView(folderID: nil, path: $path)
                 case .favorites: FavoritesView()
+                case .search: SearchView(path: $path)
                 }
             }
             .toolbar(.hidden, for: .navigationBar)
@@ -128,6 +114,48 @@ struct HomeView: View {
         let clips = allClips.count == 1 ? "1 clip" : "\(allClips.count) clips"
         let foldersText = allFolders.count == 1 ? "1 folder" : "\(allFolders.count) folders"
         return "\(clips) in \(foldersText)"
+    }
+
+    private var libraryContent: some View {
+        VStack(alignment: .leading, spacing: 24) {
+            header
+            if folders.isEmpty && unsorted.isEmpty {
+                emptyState
+            } else {
+                searchPill
+                pinnedTiles
+                if !folders.isEmpty { folderGrid }
+            }
+        }
+    }
+
+    private var folderGrid: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Folders").sectionLabelStyle()
+            LazyVGrid(columns: columns, spacing: 14) {
+                ForEach(displayedFolders) { folder in
+                    folderCell(folder)
+                }
+            }
+        }
+    }
+
+    /// Opens the search screen.
+    private var searchPill: some View {
+        Button { path.append(.search) } label: {
+            HStack(spacing: 10) {
+                Image(systemName: "magnifyingglass")
+                Text("Search clips, teachers, folders")
+                Spacer(minLength: 0)
+            }
+            .font(.system(size: 15))
+            .foregroundStyle(Theme.textSecondary)
+            .padding(.horizontal, 16)
+            .frame(maxWidth: .infinity, minHeight: 44)
+            .controlGlass(in: Capsule())
+        }
+        .buttonStyle(PressableButtonStyle())
+        .accessibilityLabel("Search")
     }
 
     private var pinnedTiles: some View {

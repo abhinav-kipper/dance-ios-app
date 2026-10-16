@@ -9,6 +9,12 @@ struct ClipActions {
     var info: (Clip) -> Void
     var delete: (Clip) -> Void
     var share: (Clip) -> Void
+    /// "Add to folders…" (also show it in other folders).
+    var link: (Clip) -> Void = { _ in }
+    /// "Remove from <folder>" for a clip shown here through a link; nil where that doesn't apply.
+    var unlink: ((Clip) -> Void)?
+    /// The folder being shown, for the "Remove from" label.
+    var folderName: String?
 }
 
 /// 60pt clip row: poster, name, duration, location tag; favorite, learned and play buttons.
@@ -23,6 +29,8 @@ struct ClipRow: View {
     var dragOrigin: UUID?
     /// Set for the first rows under a video, so their posters fly out of its deck.
     var deckNamespace: Namespace.ID?
+    /// Set when the clip shows in this folder through a link: the name of its home.
+    var linkedHome: String?
     @Environment(AppEnvironment.self) private var env
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.modelContext) private var ctx
@@ -64,6 +72,10 @@ struct ClipRow: View {
         .contextMenu {
             Button("Rename", systemImage: "pencil") { actions.info(clip) }
             Button("Move", systemImage: "folder") { actions.move(clip) }
+            Button("Add to folders…", systemImage: "folder.badge.plus") { actions.link(clip) }
+            if linkedHome != nil, let unlink = actions.unlink {
+                Button("Remove from \(actions.folderName ?? "this folder")", systemImage: "link.badge.plus") { unlink(clip) }
+            }
             Button("Share", systemImage: "square.and.arrow.up") { actions.share(clip) }
             Button(clip.isFavorite ? "Remove from favorites" : "Add to favorites", systemImage: "star") { toggleFavorite() }
             Button(clip.isLearned ? "Mark as not learned" : "Mark as learned", systemImage: "checkmark") { toggleLearned() }
@@ -91,7 +103,9 @@ struct ClipRow: View {
                         .minimumScaleFactor(0.85)
                 }
             case .loose:
-                if let title = clip.original?.title {
+                if let linkedHome {
+                    LinkBadge(home: linkedHome)
+                } else if let title = clip.original?.title {
                     Text("from \(title)")
                         .font(.system(size: 12))
                         .foregroundStyle(Theme.textSecondary)

@@ -14,6 +14,8 @@ public final class Original {
     public var folder: Folder?
     public var nextClipNumber: Int = 1
     @Relationship(deleteRule: .cascade, inverse: \Clip.original) public var clips: [Clip] = []
+    /// Extra folders it also shows in (its home is `folder`).
+    @Relationship(deleteRule: .nullify, inverse: \Folder.linkedOriginals) public var linkedFolders: [Folder] = []
 
     public init(title: String, fileName: String, duration: Double, recordedAt: Date?, folder: Folder?, importedAt: Date = .now) {
         self.id = UUID()

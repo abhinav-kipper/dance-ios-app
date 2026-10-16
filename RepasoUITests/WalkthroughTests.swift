@@ -47,8 +47,8 @@ final class WalkthroughTests: XCTestCase {
         // Hold the right side: steps forward frame by frame, then stays paused on that frame with the chip
         let videoElement = app.descendants(matching: .any)["Video"].firstMatch
         videoElement.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.35)).press(forDuration: 1.2)
-        let frameChip = app.descendants(matching: .any).matching(NSPredicate(format: "label BEGINSWITH %@", "Frame ")).firstMatch
-        XCTAssertTrue(frameChip.waitForExistence(timeout: 2), "holding a side shows the frame chip")
+        let frameChip = app.descendants(matching: .any).matching(NSPredicate(format: "label ENDSWITH %@", " seconds")).firstMatch
+        XCTAssertTrue(frameChip.waitForExistence(timeout: 2), "holding a side shows the step chip")
         XCTAssertEqual(videoElement.label, "Play", "after stepping it stays paused")
         snap("04-hold-step")
         videoElement.tap()   // play again
@@ -83,8 +83,8 @@ final class WalkthroughTests: XCTestCase {
         video.tap()
         let mid = video.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.4))
         mid.press(forDuration: 0.05, thenDragTo: mid.withOffset(CGVector(dx: 60, dy: 0)))
-        let chip = app.descendants(matching: .any).matching(NSPredicate(format: "label BEGINSWITH %@", "Frame ")).firstMatch
-        XCTAssertTrue(chip.waitForExistence(timeout: 2), "frame stepping shows the frame chip")
+        let chip = app.descendants(matching: .any).matching(NSPredicate(format: "label ENDSWITH %@", " seconds")).firstMatch
+        XCTAssertTrue(chip.waitForExistence(timeout: 2), "frame stepping shows the step chip")
         snap("04d-player-frame-step")
         close.tap()
 

@@ -75,7 +75,8 @@ struct PlayerView: View {
                 topBar
                 Spacer()
                 if showFrameChip {
-                    FrameChip(frame: model.frameIndex)
+                    StepChip(position: model.positionInItem, length: model.itemLength,
+                             direction: model.lastStepDirection, tick: model.frameIndex)
                         .padding(.bottom, 10)
                         .transition(.opacity)
                 }

@@ -18,6 +18,8 @@ public final class Clip {
     public var panY: Double = 0
     public var original: Original?
     public var folder: Folder?
+    /// Extra folders it also shows in (its home is `effectiveFolder`).
+    @Relationship(deleteRule: .nullify, inverse: \Folder.linkedClips) public var linkedFolders: [Folder] = []
 
     public init(name: String, start: Double, end: Double, sortIndex: Int, original: Original, addedAt: Date = .now) {
         self.id = UUID()

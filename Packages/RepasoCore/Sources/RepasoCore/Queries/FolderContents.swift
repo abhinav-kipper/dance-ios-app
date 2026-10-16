@@ -18,14 +18,30 @@ public enum FolderContents {
         return sortOriginals(all, by: .manual)
     }
 
+    /// Videos whose home is `folder`, then videos linked here.
     public static func originals(in folder: Folder, sort: ClipSort) -> [Original] {
-        sortOriginals(folder.originals, by: sort)
+        let linked = folder.linkedOriginals.filter { $0.folder?.id != folder.id }
+        return sortOriginals(folder.originals, by: sort) + sortOriginals(linked, by: sort)
     }
 
-    /// Clips filed in `folder` whose original lives elsewhere.
+    /// Clips filed in `folder` whose original lives elsewhere, then clips linked here.
     public static func looseClips(in folder: Folder, sort: ClipSort, hideLearned: Bool) -> [Clip] {
         let loose = folder.looseClips.filter { $0.original != nil && $0.original?.folder?.id != folder.id }
+        let shown = Set(loose.map(\.id))
+        let linked = folder.linkedClips.filter {
+            $0.original != nil && $0.effectiveFolder?.id != folder.id && !shown.contains($0.id)
+        }
         return sortClips(filter(loose, hideLearned: hideLearned), by: sort)
+            + sortClips(filter(linked, hideLearned: hideLearned), by: sort)
+    }
+
+    /// True when the video shows in `folder` because of a link (its home is elsewhere).
+    public static func isLinked(_ original: Original, in folder: Folder) -> Bool {
+        original.folder?.id != folder.id && original.linkedFolders.contains { $0.id == folder.id }
+    }
+
+    public static func isLinked(_ clip: Clip, in folder: Folder) -> Bool {
+        clip.effectiveFolder?.id != folder.id && clip.linkedFolders.contains { $0.id == folder.id }
     }
 
     /// All clips of an original, wherever they are filed.
@@ -51,8 +67,8 @@ public enum FolderContents {
     }
 
     private static func collectClipIDs(_ folder: Folder, into ids: inout Set<UUID>) {
-        for o in folder.originals { o.clips.forEach { ids.insert($0.id) } }
-        folder.looseClips.forEach { ids.insert($0.id) }
+        for o in folder.originals + folder.linkedOriginals { o.clips.forEach { ids.insert($0.id) } }
+        (folder.looseClips + folder.linkedClips).forEach { ids.insert($0.id) }
         folder.children.forEach { collectClipIDs($0, into: &ids) }
     }
 
@@ -62,9 +78,10 @@ public enum FolderContents {
         var queue: [Folder] = [folder]
         while !queue.isEmpty, out.count < limit {
             let f = queue.removeFirst()
-            let clips = (f.originals.flatMap(\.clips) + f.looseClips).sorted { $0.addedAt > $1.addedAt }
+            let videos = f.originals + f.linkedOriginals
+            let clips = (videos.flatMap(\.clips) + f.looseClips + f.linkedClips).sorted { $0.addedAt > $1.addedAt }
             out += clips.compactMap(\.thumbnailRequest)
-            out += f.originals.map(\.thumbnailRequest)
+            out += videos.map(\.thumbnailRequest)
             queue += subfolders(of: f)
         }
         var seen = Set<UUID>()

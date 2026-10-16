@@ -11,6 +11,12 @@ struct OriginalCard: View {
     let onCut: () -> Void
     let onMove: () -> Void
     let onDelete: () -> Void
+    var onLink: () -> Void = {}
+    /// Set when the video shows in this folder through a link: the name of its home.
+    var linkedHome: String?
+    /// "Remove from <folder>" for a linked video.
+    var onUnlink: (() -> Void)?
+    var folderName: String?
     var isDraggable = false
     var dragOrigin: UUID?
     @Environment(AppEnvironment.self) private var env
@@ -92,6 +98,7 @@ struct OriginalCard: View {
                 Text(meta)
                     .font(.system(size: 13))
                     .foregroundStyle(Theme.textSecondary)
+                if let linkedHome { LinkBadge(home: linkedHome) }
             }
             Spacer(minLength: 0)
             Button(action: onCut) {
@@ -127,6 +134,10 @@ struct OriginalCard: View {
         .contextMenu {
             Button("Play whole video", systemImage: "play", action: onPlay)
             Button("Move video", systemImage: "folder", action: onMove)
+            Button("Add to folders…", systemImage: "folder.badge.plus", action: onLink)
+            if linkedHome != nil, let onUnlink {
+                Button("Remove from \(folderName ?? "this folder")", systemImage: "link.badge.plus", action: onUnlink)
+            }
             Button("Delete video", systemImage: "trash", role: .destructive, action: onDelete)
         }
     }

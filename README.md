@@ -9,17 +9,20 @@ It's a native SwiftUI iPhone app (iOS 26+, Liquid Glass), dark-first, built to r
 **Library**
 - Import videos from Photos (multi-select, copied in the background with progress), tag them with instructor and class/event (suggestions from earlier imports), and optionally delete the originals from Photos afterwards.
 - Folders with subfolders, plus pinned **Unsorted** and **Favorites**. Hold and drag folder cards on Home to reorder them.
-- Each video lists its clips underneath, wherever those clips have been filed. Drag a clip onto a subfolder to file it there (hover to open the folder mid-drag), with Undo.
+- Each video lists its clips underneath (as a deck of previews that springs open), wherever those clips have been filed. Drag a clip onto a subfolder to file it there (hover to open the folder mid-drag), with Undo.
+- A video or clip has one home folder and can **also be added to other folders** (like a song in several playlists), e.g. a move under both *Turns* and its teacher's folder. Linked items wear a 🔗 badge.
+- **Search** clips, videos and folders by name, note, teacher, event or folder.
 - Sort by manual, name, date added or recently played; hide learned clips.
 - Thumbnails are cached poster frames, with muted live previews on up to 4 visible rows at a time.
 
 **Cut mode**
-- Mark start / Mark end to create a clip instantly, a Photos-style filmstrip with trim handles (0.5s minimum), and a tray of clips you can rename.
+- Mark start / Mark end to create a clip instantly (tap **Name** on the "Clip added" message to name it straight away), a Photos-style filmstrip with trim handles (0.5s minimum), and a tray of clips you can rename.
 
 **Player**
 - Tap to play/pause with zero delay (no double-tap anywhere).
 - Speeds 0.5× / 0.75× / 1× with pitch-corrected audio, loop, and an optional 1–2s pause before each repeat.
-- Swipe up/down for the next/previous clip in the folder; drag sideways while paused to step frames; pinch to zoom (1–3×), remembered per clip.
+- Swipe up/down for the next/previous clip in the folder; hold the left/right side (or drag sideways while paused) to step frame by frame; pinch to zoom (1–3×), remembered per clip.
+- Play a whole video from its thumbnail; the controls slide away while playing (drag the handle to bring them back); tap a clip's name to rename it.
 - Favorite, learned, share (exports just the clip's range), AirPlay. The screen stays awake while playing.
 
 Accessibility: every control has a VoiceOver label and is at least 44×44pt, drag-and-drop has menu alternatives, and Reduce Motion removes overshoot, jiggle, slides and live previews.
@@ -76,9 +79,10 @@ Packages/RepasoCore/        Swift package: models, rules and maths, unit-tested
     Playback/               loop timing, player gestures, zoom framing, clip queue
     Cut/                    mark/trim/filmstrip maths
     Preview/                live-preview budget and sources
+    Search/                 library search (words, accents, ranking)
     Tags/  Import/  Export/  Format/
 Repaso/                     the SwiftUI app
-  App/  Design/  Components/  Home/  Folder/  Player/  Cut/  Sheets/  Import/  DragDrop/
+  App/  Design/  Components/  Home/  Folder/  Player/  Cut/  Sheets/  Import/  DragDrop/  Search/
 RepasoUITests/              smoke test and seeded walkthroughs
 docs/                       design specs, implementation plans, TestFlight guide
 ```
@@ -87,7 +91,7 @@ The rule of the split: anything with a rule or a number in it lives in `RepasoCo
 
 ## Docs
 
-- Design specs: [core loop](docs/superpowers/specs/2026-10-15-repaso-core-loop-design.md), [drag & drop, share, tags](docs/superpowers/specs/2026-10-16-repaso-drag-share-tags-design.md), [player extras, previews, polish](docs/superpowers/specs/2026-10-16-repaso-player-previews-polish-design.md)
+- Design specs: [core loop](docs/superpowers/specs/2026-10-15-repaso-core-loop-design.md), [drag & drop, share, tags](docs/superpowers/specs/2026-10-16-repaso-drag-share-tags-design.md), [player extras, previews, polish](docs/superpowers/specs/2026-10-16-repaso-player-previews-polish-design.md), [first on-device feedback](docs/superpowers/specs/2026-10-16-repaso-practice-feedback-design.md), [several folders + search](docs/superpowers/specs/2026-10-16-repaso-collections-search-design.md)
 - Implementation plans: [docs/superpowers/plans](docs/superpowers/plans)
 - Shipping to TestFlight: [docs/TESTFLIGHT.md](docs/TESTFLIGHT.md)
 
@@ -95,7 +99,7 @@ The rule of the split: anything with a rule or a number in it lives in `RepasoCo
 
 Feature-complete for v1. Not yet verified on a physical iPhone: deleting from Photos, share-sheet targets, AirPlay, haptics, and live-preview battery use with large libraries.
 
-Out of scope for v1: iPad/Mac, iCloud sync, search, landscape, playlists, accounts.
+Out of scope for v1: iPad/Mac, iCloud sync, landscape, playlists, accounts.
 
 ## Privacy
 

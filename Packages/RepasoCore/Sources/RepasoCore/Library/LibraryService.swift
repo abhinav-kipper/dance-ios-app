@@ -84,7 +84,17 @@ public struct LibraryService {
             let loose = folder.looseClips
             for original in originals { original.folder = target }
             for clip in loose { clip.folder = target }
-            normaliseClips(in: originals + loose.compactMap(\.original))
+            // Items only linked here are linked to the parent instead (root has no links).
+            if let target {
+                for original in folder.linkedOriginals where !original.linkedFolders.contains(where: { $0.id == target.id }) {
+                    original.linkedFolders.append(target)
+                }
+                for clip in folder.linkedClips where !clip.linkedFolders.contains(where: { $0.id == target.id }) {
+                    clip.linkedFolders.append(target)
+                }
+            }
+            let linkedOwners = folder.linkedOriginals + folder.linkedClips.compactMap(\.original)
+            normaliseClips(in: originals + loose.compactMap(\.original) + linkedOwners)
             context.delete(folder)
             try save()
         }
@@ -204,6 +214,35 @@ public struct LibraryService {
         try save()
     }
 
+    // MARK: Links (also shown in other folders)
+
+    /// Replaces the folders a video also shows in. Its home and duplicates are dropped.
+    public func setLinks(_ original: Original, to folders: [Folder]) throws {
+        original.linkedFolders = Self.links(folders, excludingHome: original.folder)
+        try save()
+    }
+
+    /// Replaces the folders a clip also shows in. Its home and duplicates are dropped.
+    public func setLinks(_ clip: Clip, to folders: [Folder]) throws {
+        clip.linkedFolders = Self.links(folders, excludingHome: clip.effectiveFolder)
+        try save()
+    }
+
+    public func unlink(_ original: Original, from folder: Folder) throws {
+        original.linkedFolders.removeAll { $0.id == folder.id }
+        try save()
+    }
+
+    public func unlink(_ clip: Clip, from folder: Folder) throws {
+        clip.linkedFolders.removeAll { $0.id == folder.id }
+        try save()
+    }
+
+    static func links(_ folders: [Folder], excludingHome home: Folder?) -> [Folder] {
+        var seen = Set<UUID>()
+        return folders.filter { $0.id != home?.id && seen.insert($0.id).inserted }
+    }
+
     public func toggleFavorite(_ clip: Clip) throws {
         clip.isFavorite.toggle()
         try save()
@@ -228,11 +267,15 @@ public struct LibraryService {
 
     // MARK: Helpers
 
-    /// A clip filed in the same folder as its original "lives with its video".
+    /// A clip filed in the same folder as its original "lives with its video", and nothing is linked to its
+    /// own home.
     private func normaliseClips(in originals: [Original]) {
         for original in originals {
-            for clip in original.clips where clip.folder != nil && clip.folder?.id == original.folder?.id {
-                clip.folder = nil
+            original.linkedFolders.removeAll { $0.id == original.folder?.id }
+            for clip in original.clips {
+                if clip.folder != nil && clip.folder?.id == original.folder?.id { clip.folder = nil }
+                let home = clip.effectiveFolder?.id
+                clip.linkedFolders.removeAll { $0.id == home }
             }
         }
     }

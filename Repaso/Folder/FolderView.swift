@@ -243,6 +243,10 @@ struct FolderView: View {
                         onCut: { cutting = original },
                         onMove: { sheet = .move(.original(original)) },
                         onDelete: { sheet = .deleteOriginal(original) },
+                        onLink: { sheet = .link(.original(original)) },
+                        linkedHome: linkedHome(of: original),
+                        onUnlink: { unlink(original) },
+                        folderName: folder?.name,
                         isDraggable: folder != nil,
                         dragOrigin: folderID)
                     .riseIn(i)
@@ -261,7 +265,8 @@ struct FolderView: View {
             Text("Loose clips").sectionLabelStyle()
             VStack(spacing: 0) {
                 ForEach(Array(looseClips.enumerated()), id: \.element.id) { i, clip in
-                    ClipRow(clip: clip, context: .loose, actions: clipActions, isDraggable: true, dragOrigin: folderID)
+                    ClipRow(clip: clip, context: .loose, actions: clipActions, isDraggable: true, dragOrigin: folderID,
+                            linkedHome: linkedHome(of: clip))
                         .padding(.horizontal, 12)
                         .riseIn(i)
                         .transition(.asymmetric(insertion: .opacity, removal: .move(edge: .trailing).combined(with: .opacity)))
@@ -285,7 +290,43 @@ struct FolderView: View {
             move: { sheet = .move(.clip($0)) },
             info: { sheet = .info($0) },
             delete: { deletingClip = $0 },
-            share: { sheet = .share($0) })
+            share: { sheet = .share($0) },
+            link: { sheet = .link(.clip($0)) },
+            unlink: folder == nil ? nil : { unlink($0) },
+            folderName: folder?.name)
+    }
+
+    // MARK: Links
+
+    /// Home folder name when `original` shows here only through a link.
+    private func linkedHome(of original: Original) -> String? {
+        guard let folder, FolderContents.isLinked(original, in: folder) else { return nil }
+        return original.folder?.name ?? "Unsorted"
+    }
+
+    private func linkedHome(of clip: Clip) -> String? {
+        guard let folder, FolderContents.isLinked(clip, in: folder) else { return nil }
+        return clip.effectiveFolder?.name ?? "Unsorted"
+    }
+
+    private func unlink(_ original: Original) {
+        guard let folder else { return }
+        let lib = env.library(ctx)
+        env.perform { try withAnimation(Theme.spring) { try lib.unlink(original, from: folder) } }
+        let env = env
+        env.showToast("Removed from \(folder.name)") {
+            env.perform { try lib.setLinks(original, to: original.linkedFolders + [folder]) }
+        }
+    }
+
+    private func unlink(_ clip: Clip) {
+        guard let folder else { return }
+        let lib = env.library(ctx)
+        env.perform { try withAnimation(Theme.spring) { try lib.unlink(clip, from: folder) } }
+        let env = env
+        env.showToast("Removed from \(folder.name)") {
+            env.perform { try lib.setLinks(clip, to: clip.linkedFolders + [folder]) }
+        }
     }
 
     /// Plays the whole video; swiping moves between this folder's videos.
@@ -467,6 +508,7 @@ struct FavoritesView: View {
             move: { sheet = .move(.clip($0)) },
             info: { sheet = .info($0) },
             delete: { deletingClip = $0 },
-            share: { sheet = .share($0) })
+            share: { sheet = .share($0) },
+            link: { sheet = .link(.clip($0)) })
     }
 }

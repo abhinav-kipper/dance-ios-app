@@ -11,6 +11,9 @@ public final class Folder {
     @Relationship(deleteRule: .nullify, inverse: \Folder.parent) public var children: [Folder] = []
     @Relationship(deleteRule: .nullify, inverse: \Original.folder) public var originals: [Original] = []
     @Relationship(deleteRule: .nullify, inverse: \Clip.folder) public var looseClips: [Clip] = []
+    /// Videos and clips whose home is elsewhere but are also shown here.
+    public var linkedOriginals: [Original] = []
+    public var linkedClips: [Clip] = []
 
     public init(name: String, sortIndex: Int, parent: Folder? = nil, createdAt: Date = .now) {
         self.id = UUID()

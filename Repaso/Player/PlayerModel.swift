@@ -97,6 +97,12 @@ final class PlayerModel {
 
     var frameIndex: Int { Int((currentTime * frameRate).rounded()) }
 
+    /// Seconds into the clip (or video) being played.
+    var positionInItem: Double { max(0, currentTime - range.lowerBound) }
+    var itemLength: Double { range.upperBound - range.lowerBound }
+    /// Direction of the last frame step: +1 forward, −1 back.
+    private(set) var lastStepDirection = 0
+
     var canStep: Bool { player.currentItem?.canStepForward == true && player.currentItem?.canStepBackward == true }
 
     /// Steps `count` frames (negative = back), pausing first and staying inside the clip.
@@ -109,6 +115,7 @@ final class PlayerModel {
         let last = Int(((range.upperBound - now) * frameRate).rounded(.down)) - 1
         let allowed = min(max(count, first), max(first, last))
         guard allowed != 0 else { return }
+        lastStepDirection = allowed > 0 ? 1 : -1
         item.step(byCount: allowed)
         let after = player.currentTime().seconds
         if after.isFinite { currentTime = after }
