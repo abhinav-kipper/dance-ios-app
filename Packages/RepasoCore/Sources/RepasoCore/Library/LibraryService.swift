@@ -195,6 +195,15 @@ public struct LibraryService {
         try moveClip(receipt.clip, to: previous)
     }
 
+    /// Remembers the player's zoom and pan for this clip (clamped to what can be shown).
+    public func setFraming(_ clip: Clip, _ framing: Framing) throws {
+        let f = framing.clamped()
+        clip.zoom = f.zoom
+        clip.panX = f.panX
+        clip.panY = f.panY
+        try save()
+    }
+
     public func toggleFavorite(_ clip: Clip) throws {
         clip.isFavorite.toggle()
         try save()

@@ -17,42 +17,74 @@ struct PlayerView: View {
     @State private var ringProgress: Double = 1
     @State private var deletingOriginal: Original?
     @State private var sharing: Clip?
+    @State private var index: Int
+    // Swipe between clips
+    @State private var gestureMode: PlayerGesture.Mode?
+    @State private var swipeOffset: CGFloat = 0
+    @State private var entryOffset: CGFloat = 0
+    @State private var entryOpacity: Double = 1
+    // Frame stepping
+    @State private var stepped = 0
+    @State private var steps = 0
+    @State private var showFrameChip = false
+    // Zoom and pan
+    @State private var framing = Framing.identity
+    @State private var baseFraming = Framing.identity
+    @State private var isPinching = false
+    /// A pinch began during the current one-finger drag, so that drag must not swipe, scrub or pan.
+    @State private var dragHadPinch = false
+    @State private var isDragging = false
+    @State private var videoSize = CGSize(width: 1, height: 1)
+    @State private var resets = 0
 
-    private var clip: Clip { request.queue[request.index] }
+    init(request: PlayerRequest) {
+        self.request = request
+        _index = State(initialValue: request.index)
+    }
+
+    private var clip: Clip { request.queue[index] }
 
     var body: some View {
         ZStack {
             Color.black.ignoresSafeArea()
-            if model.missingFile {
-                missingFileCard
-            } else {
-                PlayerLayerView(player: model.player)
-                    .ignoresSafeArea()
-                    .contentShape(Rectangle())
-                    .onTapGesture {
-                        model.togglePlay()
-                        flash += 1
-                        wake()
-                    }
-                    .accessibilityLabel(model.isPlaying ? "Pause" : "Play")
-                    .accessibilityAddTraits(.isButton)
+            Group {
+                if model.missingFile {
+                    missingFileCard
+                } else {
+                    video
+                }
+                flashOverlay
+                if let seconds = model.restingSeconds { restRing(seconds) }
             }
-            flashOverlay
-            if let seconds = model.restingSeconds { restRing(seconds) }
+            .offset(y: swipeOffset + entryOffset)
+            .opacity(entryOpacity * (1 - min(abs(swipeOffset) / 260, 0.5)))
             VStack {
                 topBar
                 Spacer()
+                if showFrameChip {
+                    FrameChip(frame: model.frameIndex)
+                        .padding(.bottom, 10)
+                        .transition(.opacity)
+                }
                 panel
             }
+            .animation(.easeOut(duration: 0.2), value: showFrameChip)
+            if request.queue.count > 1 {
+                PageIndicator(count: request.queue.count, index: index)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+                    .padding(.trailing, 6)
+                    .allowsHitTesting(false)
+            }
         }
+        .sensoryFeedback(.impact(weight: .light), trigger: index)
+        .sensoryFeedback(.selection, trigger: steps)
+        .sensoryFeedback(.impact(weight: .light), trigger: resets)
         .statusBarHidden()
         .persistentSystemOverlays(.hidden)
         .onAppear {
             UIApplication.shared.isIdleTimerDisabled = true
             model.speed = speed
-            model.load(clip, videos: env.videos)
-            env.perform { try env.library(ctx).markPlayed(clip) }
-            wake()
+            loadCurrentClip()
         }
         .onDisappear {
             UIApplication.shared.isIdleTimerDisabled = false
@@ -60,7 +92,10 @@ struct PlayerView: View {
             model.tearDown()
         }
         .onChange(of: speed) { _, new in model.speed = new }
-        .onChange(of: model.isPlaying) { _, _ in wake() }
+        .onChange(of: model.isPlaying) { _, playing in
+            if playing { showFrameChip = false }
+            wake()
+        }
         .sheet(item: $sharing) { ShareSheet(clip: $0) }
         .sheet(item: $deletingOriginal) { original in
             DeleteOriginalSheet(original: original) { dismiss() }
@@ -80,15 +115,33 @@ struct PlayerView: View {
             .controlGlass(in: Circle())
             .accessibilityLabel("Close player")
             Spacer()
-            Text("\(request.title) \(request.index + 1) / \(request.queue.count)")
+            Text("\(request.title) \(index + 1) / \(request.queue.count)")
                 .font(.system(size: 14, weight: .semibold))
                 .foregroundStyle(Theme.textPrimary)
                 .padding(.horizontal, 14)
                 .frame(height: 36)
                 .glassEffect(.regular, in: Capsule())
             Spacer()
-            Color.clear.frame(width: 44, height: 44)
+            if framing.isZoomed {
+                Button(action: resetZoom) {
+                    Text("\(framing.label) Reset")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(Theme.textPrimary)
+                        .padding(.horizontal, 12)
+                        .frame(height: 44)
+                }
+                .controlGlass(in: Capsule())
+                .accessibilityLabel("Reset zoom")
+                .transition(.opacity.combined(with: .scale(scale: 0.8)))
+            } else {
+                AirPlayButton()
+                    .frame(width: 44, height: 44)
+                    .controlGlass(in: Circle())
+                    .accessibilityLabel("AirPlay")
+                    .transition(.opacity)
+            }
         }
+        .animation(Theme.motion(reduceMotion), value: framing.isZoomed)
         .padding(.horizontal, 16)
         .padding(.top, 8)
         .opacity(chromeVisible ? 1 : 0)
@@ -238,6 +291,161 @@ struct PlayerView: View {
         }
         .buttonStyle(PressableButtonStyle())
         .accessibilityLabel("Share clip")
+    }
+
+    // MARK: Video and gestures
+
+    private var video: some View {
+        PlayerLayerView(player: model.player)
+            .scaleEffect(framing.zoom)
+            .offset(x: framing.panX * videoSize.width, y: framing.panY * videoSize.height)
+            .clipped()
+            .ignoresSafeArea()
+            .onGeometryChange(for: CGSize.self) { $0.size } action: { videoSize = $0 }
+            .animation(isPinching || gestureMode == .pan ? nil : Theme.motion(reduceMotion), value: framing)
+            .contentShape(Rectangle())
+            .onTapGesture {
+                model.togglePlay()
+                flash += 1
+                wake()
+            }
+            .simultaneousGesture(dragGesture)
+            .simultaneousGesture(magnifyGesture)
+            .gesture(TwoFingerTap(action: resetZoom))
+            .accessibilityElement()
+            .accessibilityIdentifier("Video")
+            .accessibilityLabel(model.isPlaying ? "Pause" : "Play")
+            .accessibilityAddTraits(.isButton)
+            .accessibilityAdjustableAction { direction in
+                switch direction {
+                case .increment: go(by: 1)
+                case .decrement: go(by: -1)
+                @unknown default: break
+                }
+            }
+    }
+
+    /// One finger: swipe between clips, step frames when paused, or pan when zoomed (decided once per drag).
+    private var dragGesture: some Gesture {
+        // Global space: the video moves with the finger, so local translation would shrink.
+        DragGesture(minimumDistance: 6, coordinateSpace: .global)
+            .onChanged { value in
+                isDragging = true
+                guard !isPinching, !dragHadPinch else { return }
+                let dx = value.translation.width, dy = value.translation.height
+                if gestureMode == nil {
+                    gestureMode = PlayerGesture.classify(dx: dx, dy: dy, isZoomed: framing.isZoomed, isPlaying: model.isPlaying)
+                    if gestureMode == .pan { baseFraming = framing }
+                    if gestureMode == .scrub && !model.canStep { gestureMode = nil }
+                }
+                switch gestureMode {
+                case .swipe:
+                    swipeOffset = dy * PlayerGesture.followFactor
+                case .scrub:
+                    let target = PlayerGesture.frames(forDrag: dx)
+                    if target != stepped {
+                        model.step(by: target - stepped)
+                        stepped = target
+                        steps += 1
+                    }
+                    showChip()
+                case .pan:
+                    framing = Framing(zoom: baseFraming.zoom,
+                                      panX: baseFraming.panX + dx / videoSize.width,
+                                      panY: baseFraming.panY + dy / videoSize.height).clamped()
+                case nil:
+                    break
+                }
+                wake()
+            }
+            .onEnded { value in
+                defer {
+                    gestureMode = nil
+                    stepped = 0
+                    dragHadPinch = false
+                    isDragging = false
+                }
+                if dragHadPinch {
+                    withAnimation(Theme.motion(reduceMotion)) { swipeOffset = 0 }
+                    return
+                }
+                switch gestureMode {
+                case .swipe: finishSwipe(dy: value.translation.height)
+                case .pan: saveFraming()
+                case .scrub: break   // the chip stays while paused; playing again hides it
+                case nil: break
+                }
+            }
+    }
+
+    private var magnifyGesture: some Gesture {
+        MagnifyGesture()
+            .onChanged { value in
+                if !isPinching {
+                    isPinching = true
+                    dragHadPinch = true
+                    baseFraming = framing
+                    withAnimation(Theme.motion(reduceMotion)) { swipeOffset = 0 }
+                }
+                framing = Framing(zoom: baseFraming.zoom * value.magnification,
+                                  panX: baseFraming.panX, panY: baseFraming.panY).clamped()
+                wake()
+            }
+            .onEnded { _ in
+                isPinching = false
+                if !isDragging { dragHadPinch = false }   // no drag to clear it at its end
+                saveFraming()
+            }
+    }
+
+    private func finishSwipe(dy: CGFloat) {
+        let direction = PlayerGesture.swipeDirection(dy: dy)
+        if direction != 0, ClipQueue.step(from: index, by: direction, count: request.queue.count) != nil {
+            swipeOffset = 0
+            go(by: direction)
+        } else {
+            withAnimation(Theme.motion(reduceMotion)) { swipeOffset = 0 }
+        }
+    }
+
+    /// Moves to the next (+1) or previous (−1) clip; the new one slides in from 120pt (fades under Reduce Motion).
+    private func go(by direction: Int) {
+        guard let next = ClipQueue.step(from: index, by: direction, count: request.queue.count) else { return }
+        index = next
+        if reduceMotion {
+            entryOpacity = 0
+            withAnimation(.easeOut(duration: 0.25)) { entryOpacity = 1 }
+        } else {
+            entryOffset = CGFloat(direction) * PlayerGesture.slideInDistance
+            withAnimation(Theme.spring) { entryOffset = 0 }
+        }
+        loadCurrentClip()
+    }
+
+    private func loadCurrentClip() {
+        framing = clip.framing
+        showFrameChip = false
+        model.load(clip, videos: env.videos)
+        env.perform { try env.library(ctx).markPlayed(clip) }
+        wake()
+    }
+
+    private func saveFraming() {
+        let clip = clip
+        let framing = framing
+        env.perform { try env.library(ctx).setFraming(clip, framing) }
+    }
+
+    private func resetZoom() {
+        guard framing.isZoomed else { return }
+        withAnimation(Theme.motion(reduceMotion)) { framing = .identity }
+        resets += 1
+        saveFraming()
+        wake()
+    }
+
+    private func showChip() {
+        showFrameChip = true
     }
 
     // MARK: Overlays

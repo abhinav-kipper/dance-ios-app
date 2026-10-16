@@ -40,7 +40,7 @@ struct OriginalCard: View {
 
     private var header: some View {
         HStack(spacing: 12) {
-            PosterView(request: original.thumbnailRequest, cornerRadius: 10)
+            PosterView(request: original.thumbnailRequest, cornerRadius: 10, live: original.previewSource)
                 .frame(width: 64, height: 44)
                 .overlay(alignment: .bottomTrailing) {
                     Text(TimeFormat.duration(original.duration))

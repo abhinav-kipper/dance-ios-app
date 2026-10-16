@@ -29,7 +29,7 @@ struct ClipRow: View {
         HStack(spacing: 6) {
             Button { actions.play(clip) } label: {
                 HStack(spacing: 10) {
-                    PosterView(request: clip.thumbnailRequest, cornerRadius: 8)
+                    PosterView(request: clip.thumbnailRequest, cornerRadius: 8, live: clip.previewSource)
                         .frame(width: 46, height: 32)
                     VStack(alignment: .leading, spacing: 3) {
                         Text(clip.name)

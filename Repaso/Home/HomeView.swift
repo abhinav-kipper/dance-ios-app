@@ -72,6 +72,7 @@ struct HomeView: View {
             }
             .toolbar(.hidden, for: .navigationBar)
             .toastHost(env)
+            .onChange(of: reduceMotion, initial: true) { _, on in env.previews.setReduceMotion(on) }
             .onChange(of: env.drag.active) { old, new in
                 if new?.kind == .folder, liveOrder == nil { liveOrder = folders.map(\.id) }
                 if new == nil, let old, old.kind == .folder { commitOrder(placed: old.id) }

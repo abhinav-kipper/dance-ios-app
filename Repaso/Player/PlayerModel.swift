@@ -10,6 +10,9 @@ final class PlayerModel {
     private(set) var progress: Double = 0
     private(set) var restingSeconds: Double?
     private(set) var missingFile = false
+    /// Playhead in seconds within the original, and the video's frame rate, for frame stepping.
+    private(set) var currentTime: Double = 0
+    private(set) var frameRate: Double = 30
     var loop = LoopController()
     var speed: Double = 1 {
         didSet { if isPlaying && restingSeconds == nil { player.rate = Float(speed) } }
@@ -31,9 +34,12 @@ final class PlayerModel {
     func load(_ clip: Clip, videos: VideoStore) {
         cancelRest()
         // Here, not in init: SwiftUI may build throwaway @State initial values on parent re-renders.
-        try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback)
-        // setActive can block; keep it off the main thread so tap-to-play stays instant.
-        Task.detached(priority: .userInitiated) { try? AVAudioSession.sharedInstance().setActive(true) }
+        // Both calls can block, so they stay off the main thread and tap-to-play stays instant.
+        Task.detached(priority: .userInitiated) {
+            let session = AVAudioSession.sharedInstance()
+            try? session.setCategory(.playback, mode: .moviePlayback)
+            try? session.setActive(true)
+        }
         guard let original = clip.original else {
             missingFile = true
             return
@@ -46,7 +52,13 @@ final class PlayerModel {
         }
         range = clip.start...clip.end
         progress = 0
-        let item = AVPlayerItem(url: url)
+        currentTime = clip.start
+        let asset = AVURLAsset(url: url)
+        Task { [weak self] in
+            let rate = try? await asset.loadTracks(withMediaType: .video).first?.load(.nominalFrameRate)
+            if let rate, rate > 0 { self?.frameRate = Double(rate) }
+        }
+        let item = AVPlayerItem(asset: asset)
         item.audioTimePitchAlgorithm = .timeDomain   // slowed audio keeps its pitch
         item.forwardPlaybackEndTime = CMTime(seconds: clip.end, preferredTimescale: 600)
         if let endObserver { NotificationCenter.default.removeObserver(endObserver) }
@@ -76,6 +88,25 @@ final class PlayerModel {
         cancelRest()
         player.pause()
         isPlaying = false
+    }
+
+    var frameIndex: Int { Int((currentTime * frameRate).rounded()) }
+
+    var canStep: Bool { player.currentItem?.canStepForward == true && player.currentItem?.canStepBackward == true }
+
+    /// Steps `count` frames (negative = back), pausing first and staying inside the clip.
+    func step(by count: Int) {
+        guard count != 0, let item = player.currentItem else { return }
+        if isPlaying { pause() }
+        let now = player.currentTime().seconds
+        let first = Int(((range.lowerBound - now) * frameRate).rounded(.up))
+        let last = Int(((range.upperBound - now) * frameRate).rounded(.down)) - 1
+        let allowed = min(max(count, first), max(first, last))
+        guard allowed != 0 else { return }
+        item.step(byCount: allowed)
+        currentTime = player.currentTime().seconds
+        let length = range.upperBound - range.lowerBound
+        if length > 0 { progress = min(1, max(0, (currentTime - range.lowerBound) / length)) }
     }
 
     func toggleLoop() { loop.loopEnabled.toggle() }
@@ -132,6 +163,7 @@ final class PlayerModel {
     }
 
     private func tick(_ t: Double) {
+        currentTime = t
         let length = range.upperBound - range.lowerBound
         guard length > 0, restingSeconds == nil else { return }
         progress = min(1, max(0, (t - range.lowerBound) / length))

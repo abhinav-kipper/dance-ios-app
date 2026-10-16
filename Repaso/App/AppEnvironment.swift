@@ -15,6 +15,7 @@ final class AppEnvironment {
     let thumbnails: ThumbnailStore
     let importer = ImportCoordinator()
     let drag = DragState()
+    let previews = PreviewCoordinator()
     var toast: ToastState?
     private var toastTask: Task<Void, Never>?
 

@@ -36,7 +36,10 @@ final class CutModel {
             item.audioTimePitchAlgorithm = .timeDomain
             player.replaceCurrentItem(with: item)
         }
-        try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback)
+        // Off the main thread: setCategory can block while another player holds the session.
+        Task.detached(priority: .userInitiated) {
+            try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback)
+        }
         timeObserver = player.addPeriodicTimeObserver(forInterval: CMTime(value: 1, timescale: 20), queue: .main) { [weak self] t in
             let seconds = t.seconds
             MainActor.assumeIsolated { self?.tick(seconds) }

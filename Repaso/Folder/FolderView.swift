@@ -72,6 +72,9 @@ struct FolderView: View {
             .padding(.bottom, 140)
         }
         .scrollDismissesKeyboard(.interactively)
+        .onScrollPhaseChange { _, phase in
+            env.previews.setScrolling(fast: phase == .decelerating || phase == .animating)
+        }
         // Catcher: a clip carried in from another screen (spring-loading) can be dropped anywhere here.
         .dragTarget(env.drag) { ref in
             guard let folder, env.drag.origin != folder.id else { return false }
@@ -430,6 +433,9 @@ struct FavoritesView: View {
             }
             .padding(.horizontal, Theme.gutter)
             .padding(.bottom, 60)
+        }
+        .onScrollPhaseChange { _, phase in
+            env.previews.setScrolling(fast: phase == .decelerating || phase == .animating)
         }
         .background(Theme.bg.ignoresSafeArea())
         .toolbar(.hidden, for: .navigationBar)

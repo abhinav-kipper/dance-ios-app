@@ -15,6 +15,11 @@ enum Theme {
 
     static let spring = Animation.spring(response: 0.45, dampingFraction: 0.7)
 
+    /// The standard spring, or a plain ease-out under Reduce Motion (no overshoot).
+    static func motion(_ reduceMotion: Bool, _ animation: Animation = spring) -> Animation {
+        reduceMotion ? .easeOut(duration: 0.2) : animation
+    }
+
     enum Radius {
         static let folderCard: CGFloat = 24
         static let listCard: CGFloat = 22

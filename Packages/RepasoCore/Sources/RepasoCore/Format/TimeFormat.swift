@@ -1,6 +1,11 @@
 import Foundation
 
 public enum TimeFormat {
+    /// `Frame 0412` — the paused frame-stepping chip.
+    public static func frame(_ index: Int) -> String {
+        "Frame " + String(format: "%04d", max(0, index))
+    }
+
     /// `03:41.2` — Cut mode playhead.
     public static func precise(_ t: Double) -> String {
         let tenths = Int((max(0, t) * 10).rounded())

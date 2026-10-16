@@ -17,6 +17,8 @@ final class ImportCoordinator {
 
         let id = UUID()
         let pick: PhotosPickerItem
+        /// Where this video goes; per item, so a second import into another folder can't redirect the first.
+        let target: Folder?
         var name: String
         var state: State = .waiting
         var poster: ThumbnailRequest?
@@ -29,7 +31,6 @@ final class ImportCoordinator {
     }
 
     private(set) var items: [Item] = []
-    private var target: Folder?
     private var runner: Task<Void, Never>?
 
     /// Tag fields for the current batch; saved on every original it imports.
@@ -76,9 +77,10 @@ final class ImportCoordinator {
             eventText = ""
             photosResult = nil
         }
-        target = folder
         let offset = items.count
-        items += picks.enumerated().map { Item(pick: $1, name: "Video \(offset + $0 + 1)", assetID: $1.itemIdentifier) }
+        items += picks.enumerated().map {
+            Item(pick: $1, target: folder, name: "Video \(offset + $0 + 1)", assetID: $1.itemIdentifier)
+        }
         run(context: context, env: env)
     }
 
@@ -101,6 +103,8 @@ final class ImportCoordinator {
     private func process(at index: Int, context: ModelContext, env: AppEnvironment) async {
         let id = items[index].id
         let pick = items[index].pick
+        // A folder deleted mid-import sends its videos to Unsorted instead.
+        let target = items[index].target.flatMap { $0.isDeleted || $0.modelContext == nil ? nil : $0 }
         func update(_ change: (inout Item) -> Void) {
             if let j = items.firstIndex(where: { $0.id == id }) { change(&items[j]) }
         }

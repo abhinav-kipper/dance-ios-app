@@ -33,6 +33,33 @@ final class WalkthroughTests: XCTestCase {
         app.buttons["Pause before repeat: none"].tap()
         sleep(1)
         snap("04-player-slow")
+
+        // Swipe to another clip in the folder and back
+        let video = app.descendants(matching: .any)["Video"].firstMatch
+        let pill = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "Turns ")).firstMatch
+        XCTAssertTrue(pill.waitForExistence(timeout: 3))
+        let firstPosition = pill.label
+        video.swipeDown()   // "Wrap and unwrap" is last in the folder, so go back one
+        XCTAssertTrue(waitForLabel(of: pill, toDifferFrom: firstPosition), "swiping changes the clip")
+        snap("04b-player-swiped")
+        video.swipeUp()
+        XCTAssertTrue(waitForLabel(of: pill, toBe: firstPosition), "swiping the other way comes back")
+
+        // Pinch to zoom, then reset
+        video.pinch(withScale: 2, velocity: 1)
+        let reset = app.buttons["Reset zoom"]
+        XCTAssertTrue(reset.waitForExistence(timeout: 3), "zooming shows the reset chip")
+        snap("04c-player-zoomed")
+        reset.tap()
+        XCTAssertTrue(reset.waitForNonExistence(timeout: 3))
+
+        // Pause, then drag sideways to step frames
+        video.tap()
+        let mid = video.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.4))
+        mid.press(forDuration: 0.05, thenDragTo: mid.withOffset(CGVector(dx: 60, dy: 0)))
+        let chip = app.descendants(matching: .any).matching(NSPredicate(format: "label BEGINSWITH %@", "Frame ")).firstMatch
+        XCTAssertTrue(chip.waitForExistence(timeout: 2), "frame stepping shows the frame chip")
+        snap("04d-player-frame-step")
         close.tap()
 
         // Cut
@@ -61,7 +88,8 @@ final class WalkthroughTests: XCTestCase {
         app.buttons["Undo"].tap()
         XCTAssertTrue(waitForCount(of: "In Hammerlock", toBe: 1), "Undo puts the clip back with its video")
 
-        // Move via long-press menu
+        // Move via long-press menu. Opening a context menu on a `.draggable` row keeps the app "animating"
+        // for XCUITest, so the next two steps each wait out the 60s idle timeout. The menu itself works.
         XCTAssertTrue(wrap.waitForExistence(timeout: 5))
         wrap.press(forDuration: 1.0)
         app.buttons["Move"].tap()
@@ -117,7 +145,17 @@ final class WalkthroughTests: XCTestCase {
         app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", prefix)).firstMatch
     }
 
-    private func waitForCount(of label: String, toBe count: Int, timeout: TimeInterval = 3) -> Bool {
+    private func waitForLabel(of element: XCUIElement, toBe label: String, timeout: TimeInterval = 3) -> Bool {
+        let predicate = NSPredicate { _, _ in element.label == label }
+        return XCTWaiter().wait(for: [expectation(for: predicate, evaluatedWith: nil)], timeout: timeout) == .completed
+    }
+
+    private func waitForLabel(of element: XCUIElement, toDifferFrom label: String, timeout: TimeInterval = 3) -> Bool {
+        let predicate = NSPredicate { _, _ in element.exists && element.label != label }
+        return XCTWaiter().wait(for: [expectation(for: predicate, evaluatedWith: nil)], timeout: timeout) == .completed
+    }
+
+        private func waitForCount(of label: String, toBe count: Int, timeout: TimeInterval = 3) -> Bool {
         let query = app.staticTexts.matching(identifier: label)
         let predicate = NSPredicate { _, _ in query.count == count }
         return XCTWaiter().wait(for: [expectation(for: predicate, evaluatedWith: nil)], timeout: timeout) == .completed
