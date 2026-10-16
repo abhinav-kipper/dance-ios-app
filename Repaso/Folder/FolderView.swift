@@ -133,6 +133,7 @@ struct FolderView: View {
                 }
                 .foregroundStyle(Theme.accent)
                 .frame(minHeight: 44)
+                .contentShape([.interaction, .accessibility], Rectangle())
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Back to \(folder?.parent?.name ?? "Home")")
@@ -238,6 +239,7 @@ struct FolderView: View {
                         original: original,
                         clips: FolderContents.clips(of: original, sort: sort, hideLearned: hideLearned),
                         actions: clipActions,
+                        onPlay: { playOriginal(original) },
                         onCut: { cutting = original },
                         onMove: { sheet = .move(.original(original)) },
                         onDelete: { sheet = .deleteOriginal(original) },
@@ -286,7 +288,13 @@ struct FolderView: View {
             share: { sheet = .share($0) })
     }
 
-    private var deleteClipBinding: Binding<Bool> {
+    /// Plays the whole video; swiping moves between this folder's videos.
+    private func playOriginal(_ original: Original) {
+        let items = originals.map(PlaybackItem.original)
+        player = PlayerRequest(items: items, index: originals.firstIndex { $0.id == original.id } ?? 0, title: title)
+    }
+
+        private var deleteClipBinding: Binding<Bool> {
         Binding(get: { deletingClip != nil }, set: { if !$0 { deletingClip = nil } })
     }
 
@@ -401,6 +409,7 @@ struct FavoritesView: View {
                     }
                     .foregroundStyle(Theme.accent)
                     .frame(minHeight: 44)
+                    .contentShape([.interaction, .accessibility], Rectangle())
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Back to Home")

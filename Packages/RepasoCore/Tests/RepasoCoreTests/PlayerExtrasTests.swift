@@ -26,6 +26,22 @@ struct PlayerGestureTests {
         #expect(ClipQueue.step(from: 2, by: 1, count: 3) == nil)
         #expect(ClipQueue.step(from: 0, by: -1, count: 3) == nil)
     }
+    @Test func gapShortLabels() {
+        #expect(LoopController.Gap.allCases.map(\.shortLabel) == ["Off", "1s", "2s"])
+    }
+    @Test func holdSeekZones() {
+        #expect(HoldSeek.zone(forX: 10, width: 300) == .rewind)
+        #expect(HoldSeek.zone(forX: 150, width: 300) == .none)
+        #expect(HoldSeek.zone(forX: 290, width: 300) == .forward)
+        #expect(HoldSeek.zone(forX: 100, width: 300) == .none)
+        #expect(HoldSeek.zone(forX: 50, width: 0) == .none)
+        #expect(HoldSeek.zone(forX: .nan, width: 300) == .none)
+    }
+    @Test func holdStepsOneFrame() {
+        #expect(HoldSeek.frameStep(for: .forward) == 1)
+        #expect(HoldSeek.frameStep(for: .rewind) == -1)
+        #expect(HoldSeek.frameStep(for: .none) == 0)
+    }
     @Test func frameLabel() {
         #expect(TimeFormat.frame(412) == "Frame 0412")
         #expect(TimeFormat.frame(12345) == "Frame 12345")

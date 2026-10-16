@@ -12,6 +12,8 @@ enum Theme {
     static let primaryButton = Color.white.opacity(0.93)
     static let sheetFill = Color(red: 48 / 255, green: 48 / 255, blue: 54 / 255).opacity(0.74)
     static let gutter: CGFloat = 20
+    /// Tint for glass that floats over video, so white text stays readable on bright frames.
+    static let overVideoTint = Color.black.opacity(0.4)
 
     static let spring = Animation.spring(response: 0.45, dampingFraction: 0.7)
 

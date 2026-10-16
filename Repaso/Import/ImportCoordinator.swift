@@ -97,6 +97,7 @@ final class ImportCoordinator {
                 await self.process(at: i, context: context, env: env)
             }
             self?.runner = nil
+            self?.announce(env: env)
         }
     }
 
@@ -134,6 +135,38 @@ final class ImportCoordinator {
         } catch {
             update { $0.state = .failed(Self.message(for: error)) }
         }
+    }
+
+    /// Where this batch is going, for the sheet title: "Unsorted" or the folder's name.
+    var destinationName: String {
+        Self.name(of: items.last?.target)
+    }
+
+    private static func name(of folder: Folder?) -> String {
+        guard let folder, !folder.isDeleted, folder.modelContext != nil else { return "Unsorted" }
+        return folder.name
+    }
+
+    /// Navigation path to where the finished batch landed; nil if videos went to different places.
+    var finishedRoute: [Route]? {
+        let done = items.filter { $0.state == .done }
+        guard !done.isEmpty, Set(done.map { $0.target?.id }).count == 1 else { return nil }
+        let folder = done[0].target.flatMap { $0.isDeleted || $0.modelContext == nil ? nil : $0 }
+        return folder.map { f in (f.ancestors + [f]).map { .folder($0.id) } } ?? [.unsorted]
+    }
+
+    /// "2 videos added to Turns", with Open to go there.
+    private func announce(env: AppEnvironment) {
+        let done = items.filter { $0.state == .done }
+        guard !done.isEmpty else { return }
+        let count = done.count == 1 ? "1 video" : "\(done.count) videos"
+        guard let route = finishedRoute else {
+            env.showToast("\(count) imported", seconds: 3.8)
+            return
+        }
+        env.showToast("\(count) added to \(destinationName)", actionTitle: "Open", undo: {
+            env.pendingRoute = route
+        }, seconds: 5)
     }
 
     /// Saves the tag fields on every original this batch has imported so far.

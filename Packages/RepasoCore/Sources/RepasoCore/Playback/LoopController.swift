@@ -5,6 +5,8 @@ public struct LoopController: Equatable, Sendable {
 
         public var seconds: Double { Double(rawValue) }
         public var label: String { self == .none ? "No pause" : "\(rawValue)s pause" }
+        /// Fits the Player's crowded button row: "Off", "1s", "2s".
+        public var shortLabel: String { self == .none ? "Off" : "\(rawValue)s" }
     }
 
     public enum EndAction: Equatable, Sendable { case restart, restartAfter(Double), stop }

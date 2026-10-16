@@ -9,7 +9,7 @@ settings:
     SWIFT_VERSION: "6.0"
     SWIFT_STRICT_CONCURRENCY: complete
     TARGETED_DEVICE_FAMILY: "1"
-    DEVELOPMENT_TEAM: ""          # set your Team ID before device/TestFlight builds
+    DEVELOPMENT_TEAM: SMXLJ42Z9D   # Abhinav Mudgal (Personal Team); replace with the paid team ID for TestFlight
     CODE_SIGN_STYLE: Automatic
 packages:
   RepasoCore:
@@ -29,7 +29,8 @@ targets:
         CFBundleVersion: "1"
         UILaunchScreen:
           UIColorName: LaunchBackground
-        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
+        # All orientations listed so iOS 26 multitasking checks pass; the app delegate keeps it portrait.
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait, UIInterfaceOrientationPortraitUpsideDown, UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight]
         UIUserInterfaceStyle: Dark
         NSPhotoLibraryUsageDescription: "Repaso imports your class videos so you can cut and practice clips, and removes them from Photos after import when you ask."
         ITSAppUsesNonExemptEncryption: false

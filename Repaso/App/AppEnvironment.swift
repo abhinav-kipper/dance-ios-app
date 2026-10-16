@@ -6,6 +6,7 @@ struct ToastState: Identifiable {
     let id = UUID()
     let text: String
     let undo: (() -> Void)?
+    var actionTitle = "Undo"
 }
 
 /// App-lifetime services shared through the SwiftUI environment.
@@ -16,6 +17,10 @@ final class AppEnvironment {
     let importer = ImportCoordinator()
     let drag = DragState()
     let previews = PreviewCoordinator()
+    /// Videos whose clip deck is open (folder screens), kept for the session.
+    var expandedOriginals: Set<UUID> = []
+    /// Set by a toast's Open button; Home navigates there.
+    var pendingRoute: [Route]?
     var toast: ToastState?
     private var toastTask: Task<Void, Never>?
 
@@ -33,8 +38,8 @@ final class AppEnvironment {
         }
     }
 
-    func showToast(_ text: String, undo: (() -> Void)? = nil, seconds: Double = 3.8) {
-        toast = ToastState(text: text, undo: undo)
+    func showToast(_ text: String, actionTitle: String = "Undo", undo: (() -> Void)? = nil, seconds: Double = 3.8) {
+        toast = ToastState(text: text, undo: undo, actionTitle: actionTitle)
         toastTask?.cancel()
         toastTask = Task { [weak self] in
             try? await Task.sleep(for: .seconds(seconds))

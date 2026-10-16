@@ -73,6 +73,12 @@ struct HomeView: View {
             .toolbar(.hidden, for: .navigationBar)
             .toastHost(env)
             .onChange(of: reduceMotion, initial: true) { _, on in env.previews.setReduceMotion(on) }
+            .onChange(of: env.pendingRoute) { _, route in
+                guard let route else { return }
+                showImport = false
+                path = route
+                env.pendingRoute = nil
+            }
             .onChange(of: env.drag.active) { old, new in
                 if new?.kind == .folder, liveOrder == nil { liveOrder = folders.map(\.id) }
                 if new == nil, let old, old.kind == .folder { commitOrder(placed: old.id) }
@@ -195,7 +201,7 @@ struct HomeView: View {
             view.scaleEffect(scale)
         } keyframes: { _ in
             KeyframeTrack {
-                LinearKeyframe(1.08, duration: 0)
+                MoveKeyframe(1.08)   // instant jump; a zero-length segment gives the next spring a NaN velocity
                 CubicKeyframe(0.96, duration: 0.29)
                 CubicKeyframe(1, duration: 0.36)
             }

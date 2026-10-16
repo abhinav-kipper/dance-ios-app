@@ -21,6 +21,8 @@ struct ClipRow: View {
     /// Folder screens let clips be dragged onto subfolders; `dragOrigin` is that screen's folder.
     var isDraggable = false
     var dragOrigin: UUID?
+    /// Set for the first rows under a video, so their posters fly out of its deck.
+    var deckNamespace: Namespace.ID?
     @Environment(AppEnvironment.self) private var env
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.modelContext) private var ctx
@@ -29,8 +31,9 @@ struct ClipRow: View {
         HStack(spacing: 6) {
             Button { actions.play(clip) } label: {
                 HStack(spacing: 10) {
-                    PosterView(request: clip.thumbnailRequest, cornerRadius: 8, live: clip.previewSource)
-                        .frame(width: 46, height: 32)
+                    PosterView(request: clip.thumbnailRequest, cornerRadius: 10, live: clip.previewSource)
+                        .frame(width: 64, height: 44)
+                        .modifier(DeckMatch(id: clip.id, namespace: deckNamespace))
                     VStack(alignment: .leading, spacing: 3) {
                         Text(clip.name)
                             .font(.system(size: 15, weight: .semibold))
@@ -53,13 +56,13 @@ struct ClipRow: View {
                 playButton
             }
         }
-        .frame(minHeight: 60)
+        .frame(minHeight: 64)
         .opacity(isLifted ? 0.28 : 1)
         .scaleEffect(isLifted ? 0.97 : 1)
         .animation(Theme.spring, value: isLifted)
         .modifier(ClipDragSource(clip: clip, drag: env.drag, origin: dragOrigin, isEnabled: isDraggable, reduceMotion: reduceMotion))
         .contextMenu {
-            Button("Rename or add note", systemImage: "pencil") { actions.info(clip) }
+            Button("Rename", systemImage: "pencil") { actions.info(clip) }
             Button("Move", systemImage: "folder") { actions.move(clip) }
             Button("Share", systemImage: "square.and.arrow.up") { actions.share(clip) }
             Button(clip.isFavorite ? "Remove from favorites" : "Add to favorites", systemImage: "star") { toggleFavorite() }
@@ -105,6 +108,7 @@ struct ClipRow: View {
                 .foregroundStyle(clip.isFavorite ? Theme.rose : Theme.textSecondary)
                 .symbolEffect(.bounce, value: clip.isFavorite)
                 .frame(width: 44, height: 44)
+                .contentShape([.interaction, .accessibility], Rectangle())
         }
         .buttonStyle(.plain)
         .accessibilityLabel(clip.isFavorite ? "Remove from favorites" : "Add to favorites")
@@ -166,6 +170,20 @@ private struct ClipDragSource: ViewModifier {
             content.dragSource(DragRef(kind: .clip, id: clip.id), drag: drag, origin: origin) {
                 ClipLiftPreview(name: clip.name, length: clip.length, reduceMotion: reduceMotion)
             }
+        } else {
+            content
+        }
+    }
+}
+
+/// Pairs a row poster with its card in the video's deck (matched geometry), when there is one.
+private struct DeckMatch: ViewModifier {
+    let id: UUID
+    let namespace: Namespace.ID?
+
+    func body(content: Content) -> some View {
+        if let namespace {
+            content.matchedGeometryEffect(id: id, in: namespace)
         } else {
             content
         }

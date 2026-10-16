@@ -17,7 +17,8 @@ struct ImportSheet: View {
         @Bindable var importer = importer
         VStack(alignment: .leading, spacing: 18) {
             HStack(alignment: .firstTextBaseline) {
-                Text(importer.items.count == 1 ? "Importing 1 video" : "Importing \(importer.items.count) videos")
+                Text(importer.items.count == 1 ? "Importing 1 video to \(importer.destinationName)"
+                     : "Importing \(importer.items.count) videos to \(importer.destinationName)")
                     .font(.system(size: 22, weight: .bold))
                     .foregroundStyle(Theme.textPrimary)
                 Spacer()
@@ -41,6 +42,18 @@ struct ImportSheet: View {
             }
             .scrollDismissesKeyboard(.interactively)
 
+            if !importer.isRunning, let route = importer.finishedRoute {
+                Button {
+                    env.pendingRoute = route
+                    dismiss()
+                } label: {
+                    Label("Go to \(importer.destinationName)", systemImage: "arrow.right.circle")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(Theme.accent)
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                }
+                .buttonStyle(PressableButtonStyle())
+            }
             PrimarySheetButton(title: importer.isRunning ? "Hide" : "Done") { dismiss() }
                 .padding(.bottom, 12)
         }

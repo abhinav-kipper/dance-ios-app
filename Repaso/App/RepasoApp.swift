@@ -2,8 +2,17 @@ import SwiftUI
 import SwiftData
 import RepasoCore
 
+/// Portrait only (the Info.plist lists every orientation for iOS 26's multitasking checks).
+final class AppDelegate: NSObject, UIApplicationDelegate {
+    func application(_ application: UIApplication,
+                     supportedInterfaceOrientationsFor window: UIWindow?) -> UIInterfaceOrientationMask {
+        .portrait
+    }
+}
+
 @main
 struct RepasoApp: App {
+    @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     /// Held for the app's lifetime: a ModelContext traps once its container is gone.
     private let container: ModelContainer
     /// UI tests use an empty in-memory store; the orphan sweep would then delete every real video.

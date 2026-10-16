@@ -40,7 +40,7 @@ struct SubfolderDropCard: View {
                 view.scaleEffect(scale)
             } keyframes: { _ in
                 KeyframeTrack {
-                    LinearKeyframe(1.1, duration: 0)
+                    MoveKeyframe(1.1)   // instant jump; a zero-length segment gives the next spring a NaN velocity
                     CubicKeyframe(0.92, duration: 0.21)
                     CubicKeyframe(1.04, duration: 0.21)
                     CubicKeyframe(1, duration: 0.18)

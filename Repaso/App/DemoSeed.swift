@@ -42,6 +42,21 @@ enum DemoSeed {
             let loose = try lib.addClip(to: saturday, start: 44, end: 50)
             try lib.updateInfo(loose, name: "Basic with styling", note: "")
             try lib.moveClip(loose, to: footwork)
+
+            // -seedLarge: a 240-clip folder, for the scroll performance test (acceptance: smooth with 200+ clips).
+            if ProcessInfo.processInfo.arguments.contains("-seedLarge") {
+                let practice = try lib.createFolder(named: "Practice", in: nil)
+                for n in 0..<6 {
+                    let copy = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).mov")
+                    try FileManager.default.copyItem(at: seed, to: copy)
+                    let original = try lib.addOriginal(title: "Workshop \(n + 1)", fileName: try env.videos.adopt(fileAt: copy),
+                                                       duration: meta.duration, recordedAt: nil, to: practice)
+                    for i in 0..<40 {
+                        let start = Double(i % 25) * 2
+                        try lib.addClip(to: original, start: start, end: start + 1.5)
+                    }
+                }
+            }
         } catch {
             print("DemoSeed failed: \(error)")
         }

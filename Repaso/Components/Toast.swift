@@ -10,7 +10,7 @@ struct ToastView: View {
                 .font(.system(size: 15, weight: .semibold))
                 .foregroundStyle(Theme.textPrimary)
             if let undo = toast.undo {
-                Button("Undo") {
+                Button(toast.actionTitle) {
                     undo()
                     dismiss()
                 }

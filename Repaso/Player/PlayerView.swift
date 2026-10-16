@@ -2,7 +2,8 @@ import SwiftUI
 import SwiftData
 import RepasoCore
 
-/// Full-screen clip player: tap to play/pause, speed, loop, pause-before-repeat, favorite, learned.
+/// Full-screen player for clips or whole videos: tap to play/pause, hold a side to step frames, speed, loop,
+/// pause-before-repeat, favorite, learned. The control panel slides away while playing.
 struct PlayerView: View {
     let request: PlayerRequest
     @Environment(\.modelContext) private var ctx
@@ -36,13 +37,25 @@ struct PlayerView: View {
     @State private var isDragging = false
     @State private var videoSize = CGSize(width: 1, height: 1)
     @State private var resets = 0
+    // Hold to seek
+    @State private var holdEndedAt: Date?
+    // Sliding panel
+    @State private var panelHidden = false
+    @State private var panelHeight: CGFloat = 0
+    @State private var panelDrag: CGFloat = 0
+    // Rename
+    @State private var renaming = false
+    @State private var nameDraft = ""
+    @FocusState private var nameFocused: Bool
 
     init(request: PlayerRequest) {
         self.request = request
         _index = State(initialValue: request.index)
     }
 
-    private var clip: Clip { request.queue[index] }
+    private var item: PlaybackItem { request.items[index] }
+    /// nil while playing a whole video.
+    private var clip: Clip? { item.clip }
 
     var body: some View {
         ZStack {
@@ -69,8 +82,8 @@ struct PlayerView: View {
                 panel
             }
             .animation(.easeOut(duration: 0.2), value: showFrameChip)
-            if request.queue.count > 1 {
-                PageIndicator(count: request.queue.count, index: index)
+            if request.items.count > 1 {
+                PageIndicator(count: request.items.count, index: index)
                     .frame(maxWidth: .infinity, alignment: .trailing)
                     .padding(.trailing, 6)
                     .allowsHitTesting(false)
@@ -93,8 +106,11 @@ struct PlayerView: View {
         }
         .onChange(of: speed) { _, new in model.speed = new }
         .onChange(of: model.isPlaying) { _, playing in
-            if playing { showFrameChip = false }
+            if playing { showFrameChip = false } else { showPanel() }   // paused: controls come back
             wake()
+        }
+        .onChange(of: model.frameIndex) { _, _ in
+            if model.holdZone != .none { steps += 1 }   // a light tick per frame while holding
         }
         .sheet(item: $sharing) { ShareSheet(clip: $0) }
         .sheet(item: $deletingOriginal) { original in
@@ -115,12 +131,12 @@ struct PlayerView: View {
             .controlGlass(in: Circle())
             .accessibilityLabel("Close player")
             Spacer()
-            Text("\(request.title) \(index + 1) / \(request.queue.count)")
+            Text("\(request.title) \(index + 1) / \(request.items.count)")
                 .font(.system(size: 14, weight: .semibold))
                 .foregroundStyle(Theme.textPrimary)
                 .padding(.horizontal, 14)
                 .frame(height: 36)
-                .glassEffect(.regular, in: Capsule())
+                .glassEffect(.regular.tint(Theme.overVideoTint), in: Capsule())
             Spacer()
             if framing.isZoomed {
                 Button(action: resetZoom) {
@@ -134,9 +150,10 @@ struct PlayerView: View {
                 .accessibilityLabel("Reset zoom")
                 .transition(.opacity.combined(with: .scale(scale: 0.8)))
             } else {
+                // A plain fill, not Liquid Glass: the route picker redraws itself when AirPlay connects.
                 AirPlayButton()
                     .frame(width: 44, height: 44)
-                    .controlGlass(in: Circle())
+                    .background(Theme.overVideoTint, in: Circle())
                     .accessibilityLabel("AirPlay")
                     .transition(.opacity)
             }
@@ -152,13 +169,11 @@ struct PlayerView: View {
 
     private var panel: some View {
         VStack(alignment: .leading, spacing: 14) {
+            grabber
             HStack(alignment: .firstTextBaseline) {
-                Text(clip.name)
-                    .font(.system(size: 20, weight: .bold))
-                    .foregroundStyle(Theme.textPrimary)
-                    .lineLimit(1)
+                nameView
                 Spacer()
-                Text(TimeFormat.duration(clip.length))
+                Text(TimeFormat.duration(item.length))
                     .font(Theme.mono(14))
                     .foregroundStyle(Theme.textSecondary)
             }
@@ -167,7 +182,7 @@ struct PlayerView: View {
                 .foregroundStyle(Theme.textSecondary)
                 .lineLimit(1)
                 .padding(.top, -10)
-            if let note = clip.note {
+            if let note = item.note {
                 Text(note)
                     .font(.system(size: 15))
                     .foregroundStyle(Theme.textPrimary)
@@ -186,22 +201,109 @@ struct PlayerView: View {
                 loopButton
                 gapButton
                 Spacer()
-                favoriteButton
-                learnedButton
-                shareButton
+                if clip != nil {
+                    favoriteButton
+                    learnedButton
+                    shareButton
+                }
             }
         }
-        .padding(.init(top: 18, leading: 16, bottom: 14, trailing: 16))
+        .padding(.init(top: 6, leading: 16, bottom: 14, trailing: 16))
         .panelGlass(radius: Theme.Radius.panel)
         .padding(.horizontal, 12)
         .padding(.bottom, 8)
-        .opacity(chromeVisible || !model.isPlaying ? 1 : 0.42)
+        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { panelHeight = $0 }
+        .offset(y: panelOffset)
+        .opacity(panelHidden ? 0.6 : (chromeVisible || !model.isPlaying ? 1 : 0.42))
+        .animation(reduceMotion ? .easeOut(duration: 0.2) : Theme.spring, value: panelHidden)
         .animation(.easeOut(duration: 0.6), value: chromeVisible)
         .simultaneousGesture(TapGesture().onEnded { wake() })
     }
 
+    /// Slid away = only the grabber peeks out (36pt); a drag follows the finger.
+    private var panelOffset: CGFloat {
+        let hiddenOffset = reduceMotion ? 0 : max(0, panelHeight - 44)
+        return max(0, (panelHidden ? hiddenOffset : 0) + panelDrag)
+    }
+
+    /// Drag (or tap) the grabber to bring the panel up or send it down.
+    private var grabber: some View {
+        Capsule()
+            .fill(.white.opacity(0.5))
+            .frame(width: 40, height: 5)
+            .frame(maxWidth: .infinity, minHeight: 30)
+            .contentShape([.interaction, .accessibility], Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 4)
+                    .onChanged { value in
+                        panelDrag = panelHidden ? min(0, value.translation.height) : max(0, value.translation.height)
+                    }
+                    .onEnded { value in
+                        let dy = value.predictedEndTranslation.height
+                        withAnimation(reduceMotion ? .easeOut(duration: 0.2) : Theme.spring) {
+                            if panelHidden && dy < -30 { panelHidden = false }
+                            if !panelHidden && dy > 40 { panelHidden = true }
+                            panelDrag = 0
+                        }
+                        if !panelHidden { wake() }
+                    }
+            )
+            .onTapGesture {
+                withAnimation(reduceMotion ? .easeOut(duration: 0.2) : Theme.spring) { panelHidden.toggle() }
+                if !panelHidden { wake() }
+            }
+            .accessibilityLabel(panelHidden ? "Show controls" : "Hide controls")
+            .accessibilityAddTraits(.isButton)
+    }
+
+    /// Clip names rename in place: tap, type, return.
+    @ViewBuilder
+    private var nameView: some View {
+        if renaming, let clip {
+            TextField(clip.name, text: $nameDraft)   // the current name shows as the hint
+                .font(.system(size: 20, weight: .bold))
+                .foregroundStyle(Theme.textPrimary)
+                .focused($nameFocused)
+                .submitLabel(.done)
+                .onSubmit { commitRename(clip) }
+                .onChange(of: nameFocused) { _, focused in if !focused { commitRename(clip) } }
+                .accessibilityLabel("Clip name")
+                .accessibilityIdentifier("Clip name")
+        } else {
+            Text(item.name)
+                .font(.system(size: 20, weight: .bold))
+                .foregroundStyle(Theme.textPrimary)
+                .lineLimit(1)
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    guard clip != nil else { return }
+                    nameDraft = ""   // empty: typing replaces the name; return with nothing keeps it
+                    renaming = true
+                    nameFocused = true
+                    showPanel()
+                }
+                .accessibilityAddTraits(clip == nil ? [] : .isButton)
+                .accessibilityHint(clip == nil ? "" : "Renames the clip")
+                .accessibilityIdentifier("player-clip-name")
+        }
+    }
+
+    private func commitRename(_ clip: Clip) {
+        guard renaming else { return }
+        renaming = false
+        let name = nameDraft
+        env.perform { try env.library(ctx).updateInfo(clip, name: name, note: clip.note ?? "") }
+        wake()
+    }
+
+    private func showPanel() {
+        guard panelHidden else { return }
+        withAnimation(reduceMotion ? .easeOut(duration: 0.2) : Theme.spring) { panelHidden = false }
+    }
+
     private var source: String {
-        guard let original = clip.original else { return "" }
+        guard let original = item.original else { return "" }
+        if clip == nil { return original.recordedAt?.formatted(date: .abbreviated, time: .omitted) ?? "Whole video" }
         // Tagged at import: "Ataca & Alemana · Berlin 2026".
         let tags = [original.instructors.joined(separator: " & "), original.event ?? ""].filter { !$0.isEmpty }
         if !tags.isEmpty { return tags.joined(separator: " · ") }
@@ -217,6 +319,8 @@ struct PlayerView: View {
         } label: {
             Label("Loop", systemImage: "repeat")
                 .font(.system(size: 14, weight: .semibold))
+                .lineLimit(1)
+                .fixedSize()
                 .foregroundStyle(on ? Theme.accent : Theme.textSecondary)
                 .padding(.horizontal, 14)
                 .frame(height: 44)
@@ -232,8 +336,10 @@ struct PlayerView: View {
             model.cycleGap()
             wake()
         } label: {
-            Label(gap.label, systemImage: "timer")
+            Label(gap.shortLabel, systemImage: "timer")
                 .font(.system(size: 13, weight: .medium))
+                .lineLimit(1)
+                .fixedSize()
                 .foregroundStyle(gap == .none ? Theme.textSecondary : Theme.accent)
                 .padding(.horizontal, 12)
                 .frame(height: 44)
@@ -247,35 +353,37 @@ struct PlayerView: View {
 
     private var favoriteButton: some View {
         Button {
+            guard let clip else { return }
             env.perform { try env.library(ctx).toggleFavorite(clip) }
             wake()
         } label: {
-            Image(systemName: clip.isFavorite ? "star.fill" : "star")
+            Image(systemName: (clip?.isFavorite ?? false) ? "star.fill" : "star")
                 .font(.system(size: 17, weight: .semibold))
-                .foregroundStyle(clip.isFavorite ? Theme.rose : Theme.textPrimary)
-                .symbolEffect(.bounce, value: clip.isFavorite)
+                .foregroundStyle((clip?.isFavorite ?? false) ? Theme.rose : Theme.textPrimary)
+                .symbolEffect(.bounce, value: clip?.isFavorite ?? false)
                 .frame(width: 44, height: 44)
-                .background(clip.isFavorite ? Theme.roseTint : .white.opacity(0.15), in: Circle())
+                .background((clip?.isFavorite ?? false) ? Theme.roseTint : .white.opacity(0.15), in: Circle())
         }
         .buttonStyle(PressableButtonStyle())
-        .accessibilityLabel(clip.isFavorite ? "Remove from favorites" : "Add to favorites")
+        .accessibilityLabel((clip?.isFavorite ?? false) ? "Remove from favorites" : "Add to favorites")
     }
 
     private var learnedButton: some View {
         Button {
+            guard let clip else { return }
             env.perform { try env.library(ctx).toggleLearned(clip) }
             wake()
         } label: {
             Image(systemName: "checkmark")
                 .font(.system(size: 16, weight: .bold))
-                .foregroundStyle(clip.isLearned ? Theme.onAccent : Theme.textPrimary)
-                .symbolEffect(.bounce, value: clip.isLearned)
+                .foregroundStyle((clip?.isLearned ?? false) ? Theme.onAccent : Theme.textPrimary)
+                .symbolEffect(.bounce, value: clip?.isLearned ?? false)
                 .frame(width: 44, height: 44)
-                .background(clip.isLearned ? Theme.accent : .white.opacity(0.15), in: Circle())
+                .background((clip?.isLearned ?? false) ? Theme.accent : .white.opacity(0.15), in: Circle())
         }
         .buttonStyle(PressableButtonStyle())
-        .sensoryFeedback(.success, trigger: clip.isLearned) { _, new in new }
-        .accessibilityLabel(clip.isLearned ? "Mark as not learned" : "Mark as learned")
+        .sensoryFeedback(.success, trigger: clip?.isLearned ?? false) { _, new in new }
+        .accessibilityLabel((clip?.isLearned ?? false) ? "Mark as not learned" : "Mark as learned")
     }
 
     private var shareButton: some View {
@@ -305,10 +413,22 @@ struct PlayerView: View {
             .animation(isPinching || gestureMode == .pan ? nil : Theme.motion(reduceMotion), value: framing)
             .contentShape(Rectangle())
             .onTapGesture {
+                // A long press also ends with a lift; that lift isn't a tap.
+                if let ended = holdEndedAt, Date.now.timeIntervalSince(ended) < 0.4 { return }
+                guard model.holdZone == .none else { return }
                 model.togglePlay()
                 flash += 1
                 wake()
             }
+            .gesture(HoldSeekGesture(onBegin: { zone in
+                guard !isPinching, gestureMode == nil else { return }
+                model.beginHold(zone)
+                if model.holdZone != .none { showChip() }
+            }, onEnd: {
+                guard model.holdZone != .none else { return }
+                model.endHold()
+                holdEndedAt = .now
+            }))
             .simultaneousGesture(dragGesture)
             .simultaneousGesture(magnifyGesture)
             .gesture(TwoFingerTap(action: resetZoom))
@@ -400,7 +520,7 @@ struct PlayerView: View {
 
     private func finishSwipe(dy: CGFloat) {
         let direction = PlayerGesture.swipeDirection(dy: dy)
-        if direction != 0, ClipQueue.step(from: index, by: direction, count: request.queue.count) != nil {
+        if direction != 0, ClipQueue.step(from: index, by: direction, count: request.items.count) != nil {
             swipeOffset = 0
             go(by: direction)
         } else {
@@ -410,7 +530,7 @@ struct PlayerView: View {
 
     /// Moves to the next (+1) or previous (−1) clip; the new one slides in from 120pt (fades under Reduce Motion).
     private func go(by direction: Int) {
-        guard let next = ClipQueue.step(from: index, by: direction, count: request.queue.count) else { return }
+        guard let next = ClipQueue.step(from: index, by: direction, count: request.items.count) else { return }
         index = next
         if reduceMotion {
             entryOpacity = 0
@@ -423,15 +543,18 @@ struct PlayerView: View {
     }
 
     private func loadCurrentClip() {
-        framing = clip.framing
+        framing = item.framing
         showFrameChip = false
-        model.load(clip, videos: env.videos)
-        env.perform { try env.library(ctx).markPlayed(clip) }
+        renaming = false
+        model.load(item, videos: env.videos)
+        if let clip { env.perform { try env.library(ctx).markPlayed(clip) } }
+        showPanel()
         wake()
     }
 
+    /// Only clips remember their framing.
     private func saveFraming() {
-        let clip = clip
+        guard let clip else { return }
         let framing = framing
         env.perform { try env.library(ctx).setFraming(clip, framing) }
     }
@@ -460,12 +583,12 @@ struct PlayerView: View {
                 view.scaleEffect(value.scale).opacity(value.opacity)
             } keyframes: { _ in
                 KeyframeTrack(\.scale) {
-                    LinearKeyframe(0.6, duration: 0)
+                    MoveKeyframe(0.6)   // instant jump; a zero-length segment gives the next spring a NaN velocity
                     SpringKeyframe(1, duration: 0.25)
                     LinearKeyframe(1.35, duration: 0.45)
                 }
                 KeyframeTrack(\.opacity) {
-                    LinearKeyframe(1, duration: 0)
+                    MoveKeyframe(1)   // instant jump; a zero-length segment gives the next spring a NaN velocity
                     LinearKeyframe(1, duration: 0.25)
                     LinearKeyframe(0, duration: 0.45)
                 }
@@ -500,7 +623,7 @@ struct PlayerView: View {
             Text("Video file missing")
                 .font(.system(size: 20, weight: .bold))
                 .foregroundStyle(Theme.textPrimary)
-            Button("Delete video") { deletingOriginal = clip.original }
+            Button("Delete video") { deletingOriginal = item.original }
                 .font(.system(size: 15, weight: .semibold))
                 .foregroundStyle(.white)
                 .padding(.horizontal, 20)
@@ -513,14 +636,17 @@ struct PlayerView: View {
 
     // MARK: Idle
 
-    /// Shows chrome, then hides the top bar and dims the panel after 2.4s of playback.
+    /// Shows the top bar, then after 2.4s of playback fades it and slides the panel down to its grabber.
     private func wake() {
         chromeVisible = true
         idleTask?.cancel()
         idleTask = Task {
             try? await Task.sleep(for: .seconds(2.4))
-            guard !Task.isCancelled, model.isPlaying else { return }
+            guard !Task.isCancelled, model.isPlaying, !renaming else { return }
             chromeVisible = false
+            withAnimation(reduceMotion ? .easeOut(duration: 0.4) : .spring(response: 0.6, dampingFraction: 0.85)) {
+                panelHidden = true
+            }
         }
     }
 }

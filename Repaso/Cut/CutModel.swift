@@ -66,6 +66,7 @@ final class CutModel {
 
     /// Precise seeks when settled; looser while dragging so the frame keeps up with the finger.
     func seek(_ t: Double, precise: Bool = true) {
+        guard t.isFinite else { return }
         let clamped = min(max(0, t), duration)
         time = clamped
         let tolerance = precise ? CMTime.zero : CMTime(seconds: 0.1, preferredTimescale: 600)
@@ -123,7 +124,7 @@ final class CutModel {
     }
 
     private func tick(_ t: Double) {
-        guard isPlaying else { return }
+        guard isPlaying, t.isFinite else { return }   // AVFoundation reports NaN for unknown times
         time = t
         if t >= duration - 0.02 { isPlaying = false }
     }

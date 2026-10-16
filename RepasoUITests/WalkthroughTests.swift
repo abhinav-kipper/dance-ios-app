@@ -18,6 +18,7 @@ final class WalkthroughTests: XCTestCase {
 
         // Folder
         turns.tap()
+        app.openClipDecks()
         let wrap = button(beginningWith: "Wrap and unwrap")
         XCTAssertTrue(wrap.waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["In Hammerlock"].exists, "moved clip keeps its tag under the original")
@@ -29,10 +30,35 @@ final class WalkthroughTests: XCTestCase {
         XCTAssertTrue(close.waitForExistence(timeout: 5))
         sleep(2)
         snap("03-player")
+        app.showPlayerControls()
         app.buttons["speed-0.5"].firstMatch.tap()
         app.buttons["Pause before repeat: none"].tap()
         sleep(1)
         snap("04-player-slow")
+
+        // Rename the clip by tapping its name in the panel
+        app.showPlayerControls()
+        app.descendants(matching: .any)["player-clip-name"].firstMatch.tap()   // the Player's label, not the list behind
+        let nameField = app.textFields["Clip name"]
+        XCTAssertTrue(nameField.waitForExistence(timeout: 3), "tapping the name starts renaming")
+        nameField.typeText("Wrap and unwrap\n")
+        XCTAssertTrue(app.staticTexts["Wrap and unwrap"].waitForExistence(timeout: 3))
+
+        // Hold the right side: steps forward frame by frame, then stays paused on that frame with the chip
+        let videoElement = app.descendants(matching: .any)["Video"].firstMatch
+        videoElement.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.35)).press(forDuration: 1.2)
+        let frameChip = app.descendants(matching: .any).matching(NSPredicate(format: "label BEGINSWITH %@", "Frame ")).firstMatch
+        XCTAssertTrue(frameChip.waitForExistence(timeout: 2), "holding a side shows the frame chip")
+        XCTAssertEqual(videoElement.label, "Play", "after stepping it stays paused")
+        snap("04-hold-step")
+        videoElement.tap()   // play again
+
+        // The panel slides down to its grabber while playing; drag it back up
+        let showControls = app.buttons["Show controls"]
+        XCTAssertTrue(showControls.waitForExistence(timeout: 6), "panel slides away when idle")
+        snap("04a-player-panel-hidden")
+        showControls.tap()
+        XCTAssertTrue(app.buttons["Hide controls"].waitForExistence(timeout: 3))
 
         // Swipe to another clip in the folder and back
         let video = app.descendants(matching: .any)["Video"].firstMatch
@@ -62,6 +88,15 @@ final class WalkthroughTests: XCTestCase {
         snap("04d-player-frame-step")
         close.tap()
 
+        // Whole video from its thumbnail
+        let playWhole = app.buttons["Play whole video"].firstMatch
+        XCTAssertTrue(playWhole.waitForExistence(timeout: 5))
+        playWhole.tap()
+        XCTAssertTrue(app.buttons["Close player"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["Share clip"].exists, "whole videos have no clip buttons (favorite, learned, share)")
+        snap("04e-player-whole-video")
+        app.buttons["Close player"].tap()
+
         // Cut
         let cut = app.buttons["Cut clips from this video"].firstMatch
         XCTAssertTrue(cut.waitForExistence(timeout: 5))
@@ -75,6 +110,14 @@ final class WalkthroughTests: XCTestCase {
         button(beginningWith: "Mark end").tap()   // label also carries the live length
         XCTAssertTrue(app.staticTexts["Clip 4"].waitForExistence(timeout: 3), "new clip appears in the tray")
         snap("07-cut-clip-added")
+        // Name it straight away from the toast
+        let nameButton = app.buttons["Name"].firstMatch   // the folder behind Cut hosts the same toast
+        XCTAssertTrue(nameButton.waitForExistence(timeout: 3), "the clip-added toast offers Name")
+        nameButton.tap()
+        let trayField = app.textFields["Clip name"]
+        XCTAssertTrue(trayField.waitForExistence(timeout: 3))
+        trayField.typeText("Basic step\n")
+        XCTAssertTrue(app.staticTexts["Basic step"].waitForExistence(timeout: 3), "typing replaces the clip's name")
         app.buttons["Done"].tap()
 
         // Drag a clip onto a subfolder card, then Undo
@@ -113,6 +156,7 @@ final class WalkthroughTests: XCTestCase {
             throw XCTSkip("No seed.mov in the app container; DemoSeed did nothing.")
         }
         turns.tap()
+        app.openClipDecks()
         let wrap = button(beginningWith: "Wrap and unwrap")
         XCTAssertTrue(wrap.waitForExistence(timeout: 5))
         let hammerCard = button(beginningWith: "Hammerlock,")

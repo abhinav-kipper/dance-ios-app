@@ -12,8 +12,8 @@ extension View {
         glassEffect(tint.map { Glass.regular.tint($0).interactive() } ?? .regular.interactive(), in: shape)
     }
 
-    /// Floating panel over video.
+    /// Floating panel over video. Darkened, because clear glass over a bright frame washes out white text.
     func panelGlass(radius: CGFloat) -> some View {
-        glassEffect(.regular, in: RoundedRectangle(cornerRadius: radius, style: .continuous))
+        glassEffect(.regular.tint(Theme.overVideoTint), in: RoundedRectangle(cornerRadius: radius, style: .continuous))
     }
 }

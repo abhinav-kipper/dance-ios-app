@@ -11,6 +11,7 @@ struct ClipInfoSheet: View {
     @State private var name = ""
     @State private var note = ""
     @State private var saved = false
+    @FocusState private var nameFocused: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -22,6 +23,8 @@ struct ClipInfoSheet: View {
             field("Name") {
                 TextField("Clip name", text: $name)
                     .submitLabel(.done)
+                    .focused($nameFocused)
+                    .onSubmit(save)
             }
             field("Note") {
                 TextField("What to remember", text: $note, axis: .vertical)
@@ -52,6 +55,7 @@ struct ClipInfoSheet: View {
         .onAppear {
             name = clip.name
             note = clip.note ?? ""
+            nameFocused = true   // opened from "Rename": ready to type
         }
     }
 

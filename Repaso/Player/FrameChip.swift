@@ -10,7 +10,6 @@ struct FrameChip: View {
             Image(systemName: "chevron.left")
             Text(TimeFormat.frame(frame))
                 .font(Theme.mono(15))
-                .contentTransition(.numericText())
             Image(systemName: "chevron.right")
         }
         .font(.system(size: 13, weight: .semibold))

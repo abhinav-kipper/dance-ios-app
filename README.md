@@ -59,7 +59,9 @@ The walkthrough UI tests drive a seeded library and need a sample video in the a
 cp sample.mov "$(xcrun simctl get_app_container booted com.amudgal.repaso data)/Documents/seed.mov"
 ```
 
-Launch arguments used by the tests: `-uiTesting` (in-memory store, no orphan sweep), `-seedDemo` (debug builds: build a demo library from `seed.mov`), `-noLivePreviews`.
+UI tests: a smoke test, the seeded walkthrough (import-free core loop, drag-move with Undo, player swipe/zoom/frame-step), Home reorder and spring-loaded drop, an accessibility audit of Home, Folder, Cut and Player (fails on tap areas, labels and traits; contrast and Dynamic Type findings are attached to the results for review), and a 240-clip scroll test. The simulator only reports scroll duration; run that test on a device for hitch measurements.
+
+Launch arguments used by the tests: `-uiTesting` (in-memory store, no orphan sweep), `-seedDemo` (debug builds: build a demo library from `seed.mov`), `-seedLarge` (with `-seedDemo`: add a 240-clip folder), `-noLivePreviews`.
 
 ## Project layout
 

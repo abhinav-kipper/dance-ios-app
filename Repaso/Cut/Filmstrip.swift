@@ -16,7 +16,11 @@ struct Filmstrip: View {
         VStack(spacing: 8) {
             GeometryReader { geo in
                 let width = geo.size.width
-                let x = { (t: Double) in CGFloat(CutSession.x(for: t, windowStart: ws, windowLength: wl, width: width)) }
+                // Never hand a non-finite position to layout: Core Animation aborts the app on NaN.
+                let x = { (t: Double) -> CGFloat in
+                    let v = CGFloat(CutSession.x(for: t, windowStart: ws, windowLength: wl, width: width))
+                    return v.isFinite ? v : 0
+                }
                 let clampX = { (t: Double) in min(max(0, x(t)), width) }
                 ZStack(alignment: .leading) {
                     frames

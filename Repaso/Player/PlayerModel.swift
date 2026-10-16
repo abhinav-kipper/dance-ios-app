@@ -15,8 +15,13 @@ final class PlayerModel {
     private(set) var frameRate: Double = 30
     var loop = LoopController()
     var speed: Double = 1 {
-        didSet { if isPlaying && restingSeconds == nil { player.rate = Float(speed) } }
+        didSet { if isPlaying && restingSeconds == nil { player.rate = playbackRate } }
     }
+    /// Hold-to-step in progress: the side of the video being held.
+    private(set) var holdZone: HoldSeek.Zone = .none
+    private var holdTask: Task<Void, Never>?
+
+    private var playbackRate: Float { Float(speed) }
 
     private var range: ClosedRange<Double> = 0...1
     private var timeObserver: Any?
@@ -31,7 +36,7 @@ final class PlayerModel {
         }
     }
 
-    func load(_ clip: Clip, videos: VideoStore) {
+    func load(_ item: PlaybackItem, videos: VideoStore) {
         cancelRest()
         // Here, not in init: SwiftUI may build throwaway @State initial values on parent re-renders.
         // Both calls can block, so they stay off the main thread and tap-to-play stays instant.
@@ -40,7 +45,7 @@ final class PlayerModel {
             try? session.setCategory(.playback, mode: .moviePlayback)
             try? session.setActive(true)
         }
-        guard let original = clip.original else {
+        guard let original = item.original else {
             missingFile = true
             return
         }
@@ -50,24 +55,24 @@ final class PlayerModel {
             player.replaceCurrentItem(with: nil)
             return
         }
-        range = clip.start...clip.end
+        range = item.range
         progress = 0
-        currentTime = clip.start
+        currentTime = range.lowerBound
         let asset = AVURLAsset(url: url)
         Task { [weak self] in
             let rate = try? await asset.loadTracks(withMediaType: .video).first?.load(.nominalFrameRate)
             if let rate, rate > 0 { self?.frameRate = Double(rate) }
         }
-        let item = AVPlayerItem(asset: asset)
-        item.audioTimePitchAlgorithm = .timeDomain   // slowed audio keeps its pitch
-        item.forwardPlaybackEndTime = CMTime(seconds: clip.end, preferredTimescale: 600)
+        let playerItem = AVPlayerItem(asset: asset)
+        playerItem.audioTimePitchAlgorithm = .timeDomain   // slowed audio keeps its pitch
+        playerItem.forwardPlaybackEndTime = CMTime(seconds: range.upperBound, preferredTimescale: 600)
         if let endObserver { NotificationCenter.default.removeObserver(endObserver) }
         endObserver = NotificationCenter.default.addObserver(
-            forName: AVPlayerItem.didPlayToEndTimeNotification, object: item, queue: .main
+            forName: AVPlayerItem.didPlayToEndTimeNotification, object: playerItem, queue: .main
         ) { [weak self] _ in
             MainActor.assumeIsolated { self?.reachedEnd() }
         }
-        player.replaceCurrentItem(with: item)
+        player.replaceCurrentItem(with: playerItem)
         isPlaying = true
         seekToStart(thenPlay: true)
     }
@@ -80,7 +85,7 @@ final class PlayerModel {
         if progress >= 0.999 {
             seekToStart(thenPlay: true)
         } else {
-            player.playImmediately(atRate: Float(speed))
+            player.playImmediately(atRate: playbackRate)
         }
     }
 
@@ -99,20 +104,50 @@ final class PlayerModel {
         guard count != 0, let item = player.currentItem else { return }
         if isPlaying { pause() }
         let now = player.currentTime().seconds
+        guard now.isFinite else { return }
         let first = Int(((range.lowerBound - now) * frameRate).rounded(.up))
         let last = Int(((range.upperBound - now) * frameRate).rounded(.down)) - 1
         let allowed = min(max(count, first), max(first, last))
         guard allowed != 0 else { return }
         item.step(byCount: allowed)
-        currentTime = player.currentTime().seconds
+        let after = player.currentTime().seconds
+        if after.isFinite { currentTime = after }
         let length = range.upperBound - range.lowerBound
         if length > 0 { progress = min(1, max(0, (currentTime - range.lowerBound) / length)) }
+    }
+
+    // MARK: Hold to step frames
+
+    /// Holding a side pauses and steps one frame at a time in that direction until released.
+    func beginHold(_ zone: HoldSeek.Zone) {
+        let direction = HoldSeek.frameStep(for: zone)
+        guard direction != 0, holdZone == .none, canStep else { return }
+        cancelRest()
+        holdZone = zone
+        pause()
+        holdTask = Task { [weak self] in
+            while !Task.isCancelled, let self {
+                self.step(by: direction)   // clamps to the clip, so it simply stops at either end
+                try? await Task.sleep(for: .seconds(HoldSeek.frameInterval))
+            }
+        }
+    }
+
+    /// Letting go stays paused on the frame reached, so the position can be studied.
+    func endHold() {
+        guard holdZone != .none else { return }
+        holdTask?.cancel()
+        holdTask = nil
+        holdZone = .none
     }
 
     func toggleLoop() { loop.loopEnabled.toggle() }
     func cycleGap() { loop.cycleGap() }
 
     func tearDown() {
+        holdTask?.cancel()
+        holdTask = nil
+        holdZone = .none
         pause()
         if let timeObserver { player.removeTimeObserver(timeObserver) }
         if let endObserver { NotificationCenter.default.removeObserver(endObserver) }
@@ -159,10 +194,11 @@ final class PlayerModel {
 
     private func didSeek(thenPlay: Bool) {
         progress = 0
-        if thenPlay && isPlaying { player.playImmediately(atRate: Float(speed)) }
+        if thenPlay && isPlaying { player.playImmediately(atRate: playbackRate) }
     }
 
     private func tick(_ t: Double) {
+        guard t.isFinite else { return }   // NaN while seeking or switching to AirPlay
         currentTime = t
         let length = range.upperBound - range.lowerBound
         guard length > 0, restingSeconds == nil else { return }

@@ -11,6 +11,8 @@ struct CutView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var model: CutModel?
     @State private var markCount = 0
+    /// Set by the "Name" button on the clip-added toast: the tray starts renaming that clip.
+    @State private var renameRequest: UUID?
 
     private var clips: [Clip] {
         FolderContents.sortClips(original.clips, by: .dateAdded)
@@ -44,7 +46,7 @@ struct CutView: View {
                 env.perform { try env.library(ctx).updateRange(clip, start: range.lowerBound, end: range.upperBound) }
             }
             .padding(.horizontal, Theme.gutter)
-            ClipTray(model: model, clips: clips) { clip, name in
+            ClipTray(model: model, clips: clips, renameRequest: $renameRequest) { clip, name in
                 env.perform { try env.library(ctx).updateInfo(clip, name: name, note: clip.note ?? "") }
             }
             Spacer(minLength: 0)
@@ -70,7 +72,7 @@ struct CutView: View {
                 .keyframeAnimator(initialValue: 0.0, trigger: markCount) { view, opacity in
                     view.opacity(opacity)
                 } keyframes: { _ in
-                    LinearKeyframe(0.35, duration: 0)
+                    MoveKeyframe(0.35)   // instant jump; a zero-length segment gives the next spring a NaN velocity
                     LinearKeyframe(0, duration: 0.5)
                 }
                 .allowsHitTesting(false)
@@ -85,7 +87,7 @@ struct CutView: View {
                         .padding(.horizontal, 16)
                         .frame(height: 44)
                 }
-                .controlGlass(in: Capsule())
+                .controlGlass(in: Capsule(), tint: Theme.overVideoTint)
                 Spacer()
                 Text(original.title)
                     .font(.system(size: 14, weight: .semibold))
@@ -93,7 +95,7 @@ struct CutView: View {
                     .lineLimit(1)
                     .padding(.horizontal, 14)
                     .frame(height: 36)
-                    .glassEffect(.regular, in: Capsule())
+                    .glassEffect(.regular.tint(Theme.overVideoTint), in: Capsule())
                 Spacer()
                 Color.clear.frame(width: 70, height: 44)
             }
@@ -177,7 +179,9 @@ struct CutView: View {
         env.perform {
             let clip = try env.library(ctx).addClip(to: original, start: range.lowerBound, end: range.upperBound)
             model.selectedID = clip.id
-            env.showToast("\(clip.name) added", seconds: 2.2)
+            let request = $renameRequest
+            let id = clip.id
+            env.showToast("\(clip.name) added", actionTitle: "Name", undo: { request.wrappedValue = id }, seconds: 3.5)
         }
     }
 }

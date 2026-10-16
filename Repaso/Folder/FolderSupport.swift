@@ -1,12 +1,22 @@
 import SwiftUI
 import RepasoCore
 
-/// Opens the Player on `queue[index]`.
+/// Opens the Player on `items[index]`.
 struct PlayerRequest: Identifiable {
     let id = UUID()
-    let queue: [Clip]
+    let items: [PlaybackItem]
     let index: Int
     let title: String
+
+    init(items: [PlaybackItem], index: Int, title: String) {
+        self.items = items
+        self.index = index
+        self.title = title
+    }
+
+    init(queue: [Clip], index: Int, title: String) {
+        self.init(items: queue.map(PlaybackItem.clip), index: index, title: title)
+    }
 }
 
 /// Every sheet a library screen can present.

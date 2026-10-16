@@ -5,6 +5,7 @@ import RepasoCore
 struct ClipTray: View {
     @Bindable var model: CutModel
     let clips: [Clip]
+    @Binding var renameRequest: UUID?
     let onRename: (Clip, String) -> Void
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var renamingID: UUID?
@@ -36,35 +37,54 @@ struct ClipTray: View {
                     .padding(.horizontal, Theme.gutter)
             }
         }
+        .onChange(of: renameRequest) { _, id in
+            guard let id, let clip = clips.first(where: { $0.id == id }) else { return }
+            renameRequest = nil
+            if model.selectedID != id { select(clip) }
+            draft = ""   // empty: typing replaces the name; return with nothing keeps it
+            renamingID = id
+            focused = true
+        }
     }
 
     private func card(_ clip: Clip) -> some View {
         let selected = clip.id == model.selectedID
         return VStack(alignment: .leading, spacing: 4) {
             if renamingID == clip.id {
-                TextField("Clip name", text: $draft)
+                TextField(clip.name, text: $draft)   // the current name shows as the hint
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(Theme.textPrimary)
                     .focused($focused)
                     .submitLabel(.done)
                     .onSubmit { commit(clip) }
                     .onChange(of: focused) { _, isFocused in if !isFocused { commit(clip) } }
+                    .accessibilityLabel("Clip name")
+                    .accessibilityIdentifier("Clip name")
             } else {
-                Text(clip.name)
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(Theme.textPrimary)
-                    .lineLimit(1)
+                HStack(spacing: 5) {
+                    Text(clip.name)
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(Theme.textPrimary)
+                        .lineLimit(1)
+                    Image(systemName: "pencil")   // names are tappable to rename
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(Theme.textSecondary)
+                        .accessibilityHidden(true)
+                }
+                    // 44pt tap target without growing the card: the extra height overlaps its padding.
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.vertical, 13)
+                    .contentShape([.interaction, .accessibility], Rectangle())
+                    .padding(.vertical, -13)
                     .onTapGesture {
-                        if selected {
-                            draft = clip.name
-                            renamingID = clip.id
-                            focused = true
-                        } else {
-                            select(clip)
-                        }
+                        // Tapping a name always renames (and selects the card if it wasn't).
+                        if !selected { select(clip) }
+                        draft = ""   // empty: typing replaces the name; return with nothing keeps it
+                        renamingID = clip.id
+                        focused = true
                     }
                     .accessibilityAddTraits(.isButton)
-                    .accessibilityHint(selected ? "Renames the clip" : "Selects the clip")
+                    .accessibilityHint("Renames the clip")
             }
             Text("\(TimeFormat.range(clip.start))–\(TimeFormat.range(clip.end))")
                 .font(Theme.mono(12))
@@ -72,6 +92,7 @@ struct ClipTray: View {
             Text(TimeFormat.length(clip.length))
                 .font(Theme.mono(12, weight: .semibold))
                 .foregroundStyle(selected ? Theme.accent : .white.opacity(0.75))
+                .accessibilityLabel(String(format: "%.1f seconds", clip.length))
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
