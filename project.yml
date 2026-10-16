@@ -31,8 +31,12 @@ targets:
           UIColorName: LaunchBackground
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
         UIUserInterfaceStyle: Dark
-        NSPhotoLibraryUsageDescription: "Repaso imports your class videos so you can cut and practice clips."
+        NSPhotoLibraryUsageDescription: "Repaso imports your class videos so you can cut and practice clips, and removes them from Photos after import when you ask."
         ITSAppUsesNonExemptEncryption: false
+        UTExportedTypeDeclarations:
+          - UTTypeIdentifier: com.amudgal.repaso.drag-ref
+            UTTypeDescription: Repaso item
+            UTTypeConformsTo: [public.data]
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.amudgal.repaso

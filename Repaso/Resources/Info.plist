@@ -23,7 +23,7 @@
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 	<key>NSPhotoLibraryUsageDescription</key>
-	<string>Repaso imports your class videos so you can cut and practice clips.</string>
+	<string>Repaso imports your class videos so you can cut and practice clips, and removes them from Photos after import when you ask.</string>
 	<key>UILaunchScreen</key>
 	<dict>
 		<key>UIColorName</key>
@@ -35,5 +35,18 @@
 	</array>
 	<key>UIUserInterfaceStyle</key>
 	<string>Dark</string>
+	<key>UTExportedTypeDeclarations</key>
+	<array>
+		<dict>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.data</string>
+			</array>
+			<key>UTTypeDescription</key>
+			<string>Repaso item</string>
+			<key>UTTypeIdentifier</key>
+			<string>com.amudgal.repaso.drag-ref</string>
+		</dict>
+	</array>
 </dict>
 </plist>

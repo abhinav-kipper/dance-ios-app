@@ -11,6 +11,7 @@ struct FolderView: View {
     @Environment(\.modelContext) private var ctx
     @Environment(AppEnvironment.self) private var env
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Query private var matches: [Folder]
     @Query(filter: #Predicate<Original> { $0.folder == nil }) private var unsortedOriginals: [Original]
     @AppStorage private var sortRaw: String
@@ -24,6 +25,11 @@ struct FolderView: View {
     @State private var showPicker = false
     @State private var showImport = false
     @State private var editingFolderID: UUID?
+    @State private var hoveredFolderID: UUID?
+    @State private var springTask: Task<Void, Never>?
+    @State private var absorbCounts: [UUID: Int] = [:]
+    @State private var dropSuccess = 0
+    @State private var springLoads = 0
 
     init(folderID: UUID?, path: Binding<[Route]>) {
         self.folderID = folderID
@@ -66,12 +72,28 @@ struct FolderView: View {
             .padding(.bottom, 140)
         }
         .scrollDismissesKeyboard(.interactively)
+        // Catcher: a clip carried in from another screen (spring-loading) can be dropped anywhere here.
+        .dragTarget(env.drag) { ref in
+            guard let folder, env.drag.origin != folder.id else { return false }
+            return drop(ref, on: folder)
+        }
         .background(Theme.bg.ignoresSafeArea())
         .overlay(alignment: .bottom) {
             FloatingPill(title: "Import", systemImage: "square.and.arrow.down") { showPicker = true }
         }
+        .overlay(alignment: .top) { dropBanner }
+        .animation(Theme.spring, value: showDropBanner)
+        .sensoryFeedback(.success, trigger: dropSuccess)
+        .sensoryFeedback(.impact(weight: .light), trigger: springLoads)
+        .onChange(of: env.drag.active) { _, active in
+            if active == nil {
+                springTask?.cancel()
+                hoveredFolderID = nil
+            }
+        }
         .toolbar(.hidden, for: .navigationBar)
-        .photosPicker(isPresented: $showPicker, selection: $picks, matching: .videos, preferredItemEncoding: .current)
+        .photosPicker(isPresented: $showPicker, selection: $picks, matching: .videos,
+                         preferredItemEncoding: .current, photoLibrary: .shared())
         .onChange(of: picks) { _, new in
             guard !new.isEmpty else { return }
             env.importer.start(new, into: folder, context: ctx, env: env)
@@ -157,7 +179,14 @@ struct FolderView: View {
 
     private var subfolderSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Folders").sectionLabelStyle()
+            Group {
+                if isClipDragActive {
+                    Text("Drop on a folder").sectionLabelStyle(Theme.accent)
+                } else {
+                    Text("Folders").sectionLabelStyle()
+                }
+            }
+            .animation(.easeOut(duration: 0.2), value: isClipDragActive)
             LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 3), spacing: 10) {
                 ForEach(subfolders) { sub in
                     let editing = Binding(
@@ -165,13 +194,18 @@ struct FolderView: View {
                         set: { if !$0 { editingFolderID = nil } })
                     Group {
                         if editingFolderID == sub.id {
-                            FolderCard(folder: sub, compact: true, isEditingName: editing)
+                            dropCard(sub, editing: editing)
                         } else {
                             NavigationLink(value: Route.folder(sub.id)) {
-                                FolderCard(folder: sub, compact: true, isEditingName: editing)
+                                dropCard(sub, editing: editing)
                             }
                             .buttonStyle(PressableButtonStyle())
                         }
+                    }
+                    .zIndex(hoveredFolderID == sub.id ? 1 : 0)
+                    .dragTarget(env.drag, isTargeted: { hover(sub, $0) }) { ref in
+                        hoveredFolderID = nil
+                        return drop(ref, on: sub)
                     }
                     .contextMenu {
                         Button("Rename", systemImage: "pencil") { editingFolderID = sub.id }
@@ -203,7 +237,9 @@ struct FolderView: View {
                         actions: clipActions,
                         onCut: { cutting = original },
                         onMove: { sheet = .move(.original(original)) },
-                        onDelete: { sheet = .deleteOriginal(original) })
+                        onDelete: { sheet = .deleteOriginal(original) },
+                        isDraggable: folder != nil,
+                        dragOrigin: folderID)
                     .riseIn(i)
                 }
             }
@@ -220,7 +256,7 @@ struct FolderView: View {
             Text("Loose clips").sectionLabelStyle()
             VStack(spacing: 0) {
                 ForEach(Array(looseClips.enumerated()), id: \.element.id) { i, clip in
-                    ClipRow(clip: clip, context: .loose, actions: clipActions)
+                    ClipRow(clip: clip, context: .loose, actions: clipActions, isDraggable: true, dragOrigin: folderID)
                         .padding(.horizontal, 12)
                         .riseIn(i)
                         .transition(.asymmetric(insertion: .opacity, removal: .move(edge: .trailing).combined(with: .opacity)))
@@ -243,7 +279,8 @@ struct FolderView: View {
             },
             move: { sheet = .move(.clip($0)) },
             info: { sheet = .info($0) },
-            delete: { deletingClip = $0 })
+            delete: { deletingClip = $0 },
+            share: { sheet = .share($0) })
     }
 
     private var deleteClipBinding: Binding<Bool> {
@@ -257,6 +294,74 @@ struct FolderView: View {
             try withAnimation(Theme.spring) { created = try env.library(ctx).createFolder(named: "", in: folder) }
             editingFolderID = created?.id
         }
+    }
+
+    // MARK: Drag and drop
+
+    private var isClipDragActive: Bool { env.drag.active?.kind == .clip }
+
+    /// A clip dragged in from another folder screen can be dropped anywhere on this one.
+    private var showDropBanner: Bool {
+        guard let folder, isClipDragActive else { return false }
+        return env.drag.origin != folder.id
+    }
+
+    @ViewBuilder
+    private var dropBanner: some View {
+        if showDropBanner, let folder {
+            Label("Drop to file in \(folder.name)", systemImage: "arrow.down.to.line")
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(Theme.onAccent)
+                .padding(.horizontal, 18)
+                .frame(height: 44)
+                .background(Theme.accent, in: Capsule())
+                .padding(.top, 8)
+                .transition(.move(edge: .top).combined(with: .opacity))
+                .allowsHitTesting(false)
+        }
+    }
+
+    private func dropCard(_ sub: Folder, editing: Binding<Bool>) -> some View {
+        SubfolderDropCard(folder: sub, isEditingName: editing, isClipDragActive: isClipDragActive,
+                          isHovered: hoveredFolderID == sub.id, absorbCount: absorbCounts[sub.id, default: 0])
+    }
+
+    /// Hover starts the 0.9s spring-load: if still hovered, the folder opens with the drag in hand.
+    private func hover(_ sub: Folder, _ isTargeted: Bool) {
+        guard isClipDragActive else { return }
+        springTask?.cancel()
+        guard isTargeted else {
+            if hoveredFolderID == sub.id { hoveredFolderID = nil }
+            return
+        }
+        hoveredFolderID = sub.id
+        springTask = Task {
+            try? await Task.sleep(for: .seconds(0.9))
+            guard !Task.isCancelled, hoveredFolderID == sub.id else { return }
+            hoveredFolderID = nil
+            springLoads += 1
+            path.append(.folder(sub.id))
+        }
+    }
+
+    private func drop(_ ref: DragRef, on target: Folder) -> Bool {
+        springTask?.cancel()
+        guard ref.kind == .clip, let clip = fetchClip(ref.id) else { return false }
+        let lib = env.library(ctx)
+        var receipt: ClipMoveReceipt?
+        env.perform { receipt = try withAnimation(Theme.spring) { try lib.dropClip(clip, on: target) } }
+        guard let receipt else { return false }
+        if !reduceMotion { absorbCounts[target.id, default: 0] += 1 }
+        dropSuccess += 1
+        let env = env
+        env.showToast("Moved to \(target.name)") {
+            env.perform { try withAnimation(Theme.spring) { try lib.undo(receipt) } }
+        }
+        return true
+    }
+
+    private func fetchClip(_ id: UUID) -> Clip? {
+        try? ctx.fetch(FetchDescriptor<Clip>(predicate: #Predicate { $0.id == id })).first
     }
 
     private func requestDelete(_ sub: Folder) {
@@ -346,6 +451,7 @@ struct FavoritesView: View {
             },
             move: { sheet = .move(.clip($0)) },
             info: { sheet = .info($0) },
-            delete: { deletingClip = $0 })
+            delete: { deletingClip = $0 },
+            share: { sheet = .share($0) })
     }
 }

@@ -30,6 +30,7 @@ struct RepasoApp: App {
                     await DemoSeed.runIfRequested(container.mainContext, env: env)
                     #endif
                     if !uiTesting { env.sweepOrphans(container.mainContext) }
+                    ShareSheet.clearExports()
                 }
         }
         .modelContainer(container)

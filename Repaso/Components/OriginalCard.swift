@@ -9,6 +9,8 @@ struct OriginalCard: View {
     let onCut: () -> Void
     let onMove: () -> Void
     let onDelete: () -> Void
+    var isDraggable = false
+    var dragOrigin: UUID?
     @State private var expanded = true
 
     var body: some View {
@@ -18,7 +20,7 @@ struct OriginalCard: View {
                 Divider().overlay(.white.opacity(0.1)).padding(.horizontal, 12)
                 VStack(spacing: 0) {
                     ForEach(clips) { clip in
-                        ClipRow(clip: clip, context: .underOriginal, actions: actions)
+                        ClipRow(clip: clip, context: .underOriginal, actions: actions, isDraggable: isDraggable, dragOrigin: dragOrigin)
                             .padding(.horizontal, 12)
                             .transition(.opacity.combined(with: .move(edge: .trailing)))
                     }
@@ -28,6 +30,12 @@ struct OriginalCard: View {
         }
         .cardGlass(radius: Theme.Radius.listCard)
         .animation(Theme.spring, value: clips.map(\.id))
+    }
+
+    /// "Workshop · 3 clips" when the import tagged an event.
+    private var meta: String {
+        let count = original.clips.count == 1 ? "1 clip" : "\(original.clips.count) clips"
+        return original.event.map { "\($0) · \(count)" } ?? count
     }
 
     private var header: some View {
@@ -48,7 +56,7 @@ struct OriginalCard: View {
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(Theme.textPrimary)
                     .lineLimit(2)
-                Text(original.clips.count == 1 ? "1 clip" : "\(original.clips.count) clips")
+                Text(meta)
                     .font(.system(size: 13))
                     .foregroundStyle(Theme.textSecondary)
             }

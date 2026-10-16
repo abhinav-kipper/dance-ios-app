@@ -8,6 +8,7 @@ struct ClipActions {
     var move: (Clip) -> Void
     var info: (Clip) -> Void
     var delete: (Clip) -> Void
+    var share: (Clip) -> Void
 }
 
 /// 60pt clip row: poster, name, duration, location tag; favorite, learned and play buttons.
@@ -17,7 +18,11 @@ struct ClipRow: View {
     let clip: Clip
     let context: Context
     let actions: ClipActions
+    /// Folder screens let clips be dragged onto subfolders; `dragOrigin` is that screen's folder.
+    var isDraggable = false
+    var dragOrigin: UUID?
     @Environment(AppEnvironment.self) private var env
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.modelContext) private var ctx
 
     var body: some View {
@@ -49,9 +54,14 @@ struct ClipRow: View {
             }
         }
         .frame(minHeight: 60)
+        .opacity(isLifted ? 0.28 : 1)
+        .scaleEffect(isLifted ? 0.97 : 1)
+        .animation(Theme.spring, value: isLifted)
+        .modifier(ClipDragSource(clip: clip, drag: env.drag, origin: dragOrigin, isEnabled: isDraggable, reduceMotion: reduceMotion))
         .contextMenu {
             Button("Rename or add note", systemImage: "pencil") { actions.info(clip) }
             Button("Move", systemImage: "folder") { actions.move(clip) }
+            Button("Share", systemImage: "square.and.arrow.up") { actions.share(clip) }
             Button(clip.isFavorite ? "Remove from favorites" : "Add to favorites", systemImage: "star") { toggleFavorite() }
             Button(clip.isLearned ? "Mark as not learned" : "Mark as learned", systemImage: "checkmark") { toggleLearned() }
             Button("Delete", systemImage: "trash", role: .destructive) { actions.delete(clip) }
@@ -133,11 +143,31 @@ struct ClipRow: View {
         .accessibilityLabel("Play clip")
     }
 
+    private var isLifted: Bool { env.drag.active?.id == clip.id }
+
     private func toggleFavorite() {
         env.perform { try env.library(ctx).toggleFavorite(clip) }
     }
 
     private func toggleLearned() {
         env.perform { try env.library(ctx).toggleLearned(clip) }
+    }
+}
+
+private struct ClipDragSource: ViewModifier {
+    let clip: Clip
+    let drag: DragState
+    let origin: UUID?
+    let isEnabled: Bool
+    let reduceMotion: Bool
+
+    func body(content: Content) -> some View {
+        if isEnabled {
+            content.dragSource(DragRef(kind: .clip, id: clip.id), drag: drag, origin: origin) {
+                ClipLiftPreview(name: clip.name, length: clip.length, reduceMotion: reduceMotion)
+            }
+        } else {
+            content
+        }
     }
 }

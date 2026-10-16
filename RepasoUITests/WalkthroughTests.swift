@@ -50,6 +50,17 @@ final class WalkthroughTests: XCTestCase {
         snap("07-cut-clip-added")
         app.buttons["Done"].tap()
 
+        // Drag a clip onto a subfolder card, then Undo
+        XCTAssertTrue(wrap.waitForExistence(timeout: 5))
+        let hammerCard = button(beginningWith: "Hammerlock,")   // the card, not the "Hammerlock exit" row
+        XCTAssertTrue(hammerCard.waitForExistence(timeout: 3))
+        wrap.press(forDuration: 0.4, thenDragTo: hammerCard, withVelocity: .slow, thenHoldForDuration: 0.3)
+        XCTAssertTrue(app.staticTexts["Moved to Hammerlock"].waitForExistence(timeout: 3), "drop shows the Undo toast")
+        XCTAssertTrue(waitForCount(of: "In Hammerlock", toBe: 2), "dropped clip gains its tag")
+        snap("08-drag-moved")
+        app.buttons["Undo"].tap()
+        XCTAssertTrue(waitForCount(of: "In Hammerlock", toBe: 1), "Undo puts the clip back with its video")
+
         // Move via long-press menu
         XCTAssertTrue(wrap.waitForExistence(timeout: 5))
         wrap.press(forDuration: 1.0)
@@ -57,15 +68,59 @@ final class WalkthroughTests: XCTestCase {
         let footwork = app.buttons["Footwork"].firstMatch
         XCTAssertTrue(footwork.waitForExistence(timeout: 3))
         footwork.tap()
-        snap("08-move-sheet")
+        snap("09-move-sheet")
         app.buttons["Move to Footwork"].tap()
         sleep(2)
-        snap("09-after-move")
+        snap("09b-after-move")
         XCTAssertTrue(app.staticTexts["In Footwork"].waitForExistence(timeout: 3))
+    }
+
+    /// Hovering a subfolder card for 0.9s opens it with the clip still in hand; releasing files it there.
+    func testSpringLoadedDrop() throws {
+        continueAfterFailure = false
+        app.launchArguments = ["-uiTesting", "-seedDemo"]
+        app.launch()
+        let turns = button(beginningWith: "Turns")
+        guard turns.waitForExistence(timeout: 10) else {
+            throw XCTSkip("No seed.mov in the app container; DemoSeed did nothing.")
+        }
+        turns.tap()
+        let wrap = button(beginningWith: "Wrap and unwrap")
+        XCTAssertTrue(wrap.waitForExistence(timeout: 5))
+        let hammerCard = button(beginningWith: "Hammerlock,")
+        wrap.press(forDuration: 0.4, thenDragTo: hammerCard, withVelocity: .slow, thenHoldForDuration: 1.6)
+        XCTAssertTrue(app.staticTexts["Moved to Hammerlock"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.staticTexts["Hammerlock"].exists, "the hovered folder opened")
+        XCTAssertTrue(button(beginningWith: "Wrap and unwrap").exists, "the clip is now a loose clip here")
+        snap("11-spring-loaded")
+    }
+
+    func testHomeReorderByDrag() throws {
+        continueAfterFailure = false
+        app.launchArguments = ["-uiTesting", "-seedDemo"]
+        app.launch()
+        let turns = button(beginningWith: "Turns")
+        let footwork = button(beginningWith: "Footwork")
+        guard turns.waitForExistence(timeout: 10) else {
+            throw XCTSkip("No seed.mov in the app container; DemoSeed did nothing.")
+        }
+        XCTAssertLessThan(turns.frame.minX, footwork.frame.minX, "seed puts Turns first")
+        footwork.press(forDuration: 0.8, thenDragTo: turns, withVelocity: .slow, thenHoldForDuration: 0.5)
+        snap("10-home-reordered")
+        let moved = NSPredicate { _, _ in footwork.frame.minX < turns.frame.minX }
+        wait(for: [expectation(for: moved, evaluatedWith: nil)], timeout: 3)
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label ENDSWITH %@", "folders")).firstMatch.exists,
+                      "subtitle is back to the clip count once the drag ends")
     }
 
     private func button(beginningWith prefix: String) -> XCUIElement {
         app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", prefix)).firstMatch
+    }
+
+    private func waitForCount(of label: String, toBe count: Int, timeout: TimeInterval = 3) -> Bool {
+        let query = app.staticTexts.matching(identifier: label)
+        let predicate = NSPredicate { _, _ in query.count == count }
+        return XCTWaiter().wait(for: [expectation(for: predicate, evaluatedWith: nil)], timeout: timeout) == .completed
     }
 
     private func snap(_ name: String) {

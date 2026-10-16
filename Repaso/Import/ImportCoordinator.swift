@@ -22,13 +22,39 @@ final class ImportCoordinator {
         var poster: ThumbnailRequest?
         var duration: Double?
         var size: Int64?
+        /// Photos asset id, for the delete-from-Photos offer (needs the picker's `photoLibrary: .shared()`).
+        var assetID: String?
+        var originalID: UUID?
+        var recordedAt: Date?
     }
 
     private(set) var items: [Item] = []
     private var target: Folder?
     private var runner: Task<Void, Never>?
 
+    /// Tag fields for the current batch; saved on every original it imports.
+    var instructorsText = ""
+    var eventText = ""
+    /// Outcome line of the delete-from-Photos offer; nil until the user answers it.
+    private(set) var photosResult: String?
+    private(set) var isDeletingFromPhotos = false
+
     var isRunning: Bool { runner != nil }
+
+    var recordedLine: String? { ImportSummary.recordedLine(items.compactMap(\.recordedAt)) }
+
+    /// Only videos that made it into the library may leave Photos.
+    private var deletableAssetIDs: [String] {
+        items.filter { $0.state == .done }.compactMap(\.assetID)
+    }
+
+    /// How many videos to offer deleting from Photos, once the batch has finished.
+    var photosPromptCount: Int? {
+        guard !isRunning, photosResult == nil,
+              !items.contains(where: { $0.state == .waiting || $0.state.isCopying }) else { return nil }
+        let count = deletableAssetIDs.count
+        return count > 0 ? count : nil
+    }
 
     var overallProgress: Double {
         guard !items.isEmpty else { return 0 }
@@ -44,10 +70,15 @@ final class ImportCoordinator {
 
     func start(_ picks: [PhotosPickerItem], into folder: Folder?, context: ModelContext, env: AppEnvironment) {
         guard !picks.isEmpty else { return }
-        if !isRunning { items.removeAll() }
+        if !isRunning {
+            items.removeAll()
+            instructorsText = ""
+            eventText = ""
+            photosResult = nil
+        }
         target = folder
         let offset = items.count
-        items += picks.enumerated().map { Item(pick: $1, name: "Video \(offset + $0 + 1)") }
+        items += picks.enumerated().map { Item(pick: $1, name: "Video \(offset + $0 + 1)", assetID: $1.itemIdentifier) }
         run(context: context, env: env)
     }
 
@@ -84,8 +115,11 @@ final class ImportCoordinator {
             let fileName = try env.videos.adopt(fileAt: transfer.url)
             let original = try env.library(context).addOriginal(
                 title: Self.title(recordedAt: meta.recordedAt, fallback: "Imported video"),
-                fileName: fileName, duration: meta.duration, recordedAt: meta.recordedAt, to: target)
+                fileName: fileName, duration: meta.duration, recordedAt: meta.recordedAt, to: target,
+                instructors: TagText.instructors(from: instructorsText), event: eventText)
             update {
+                $0.originalID = original.id
+                $0.recordedAt = meta.recordedAt
                 $0.name = original.title
                 $0.duration = meta.duration
                 $0.size = env.videos.fileSize(fileName)
@@ -95,6 +129,30 @@ final class ImportCoordinator {
             _ = await env.thumbnails.image(for: original.thumbnailRequest)
         } catch {
             update { $0.state = .failed(Self.message(for: error)) }
+        }
+    }
+
+    /// Saves the tag fields on every original this batch has imported so far.
+    func applyTags(context: ModelContext, env: AppEnvironment) {
+        let ids = Set(items.compactMap(\.originalID))
+        guard !ids.isEmpty else { return }
+        let originals = ((try? context.fetch(FetchDescriptor<Original>())) ?? []).filter { ids.contains($0.id) }
+        let instructors = TagText.instructors(from: instructorsText)
+        let event = eventText
+        env.perform { try env.library(context).setTags(originals, instructors: instructors, event: event) }
+    }
+
+    func keepInPhotos() { photosResult = PhotosCleanupText.kept }
+
+    func deleteFromPhotos() async {
+        guard !isDeletingFromPhotos else { return }
+        isDeletingFromPhotos = true
+        defer { isDeletingFromPhotos = false }
+        switch await PhotosCleaner.delete(deletableAssetIDs) {
+        case .removed: photosResult = PhotosCleanupText.removed
+        case .kept: photosResult = PhotosCleanupText.kept
+        case .needsAccess: photosResult = PhotosCleanupText.needsAccess
+        case .failed: photosResult = PhotosCleanupText.failed
         }
     }
 
@@ -110,4 +168,11 @@ final class ImportCoordinator {
     }
 
     enum ImportError: Error { case unreadable }
+}
+
+extension ImportCoordinator.Item.State {
+    var isCopying: Bool {
+        if case .copying = self { return true }
+        return false
+    }
 }

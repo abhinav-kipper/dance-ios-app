@@ -14,6 +14,7 @@ final class AppEnvironment {
     let videos: VideoStore
     let thumbnails: ThumbnailStore
     let importer = ImportCoordinator()
+    let drag = DragState()
     var toast: ToastState?
     private var toastTask: Task<Void, Never>?
 

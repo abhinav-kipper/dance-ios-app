@@ -37,6 +37,9 @@ public final class Clip {
         return folder.id != original?.folder?.id
     }
 
+    /// Where the clip shows up as filed: its own folder, or its original's when it lives with its video.
+    public var effectiveFolder: Folder? { folder ?? original?.folder }
+
     public var thumbnailRequest: ThumbnailRequest? {
         guard let original else { return nil }
         return ThumbnailRequest(id: id, fileName: original.fileName, time: start + (end - start) * 0.3)

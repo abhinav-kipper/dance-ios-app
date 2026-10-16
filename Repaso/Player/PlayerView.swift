@@ -16,6 +16,7 @@ struct PlayerView: View {
     @State private var flash = 0
     @State private var ringProgress: Double = 1
     @State private var deletingOriginal: Original?
+    @State private var sharing: Clip?
 
     private var clip: Clip { request.queue[request.index] }
 
@@ -60,6 +61,7 @@ struct PlayerView: View {
         }
         .onChange(of: speed) { _, new in model.speed = new }
         .onChange(of: model.isPlaying) { _, _ in wake() }
+        .sheet(item: $sharing) { ShareSheet(clip: $0) }
         .sheet(item: $deletingOriginal) { original in
             DeleteOriginalSheet(original: original) { dismiss() }
         }
@@ -133,6 +135,7 @@ struct PlayerView: View {
                 Spacer()
                 favoriteButton
                 learnedButton
+                shareButton
             }
         }
         .padding(.init(top: 18, leading: 16, bottom: 14, trailing: 16))
@@ -146,6 +149,9 @@ struct PlayerView: View {
 
     private var source: String {
         guard let original = clip.original else { return "" }
+        // Tagged at import: "Ataca & Alemana · Berlin 2026".
+        let tags = [original.instructors.joined(separator: " & "), original.event ?? ""].filter { !$0.isEmpty }
+        if !tags.isEmpty { return tags.joined(separator: " · ") }
         guard let recorded = original.recordedAt else { return original.title }
         return "\(original.title) · \(recorded.formatted(date: .abbreviated, time: .omitted))"
     }
@@ -217,6 +223,21 @@ struct PlayerView: View {
         .buttonStyle(PressableButtonStyle())
         .sensoryFeedback(.success, trigger: clip.isLearned) { _, new in new }
         .accessibilityLabel(clip.isLearned ? "Mark as not learned" : "Mark as learned")
+    }
+
+    private var shareButton: some View {
+        Button {
+            model.pause()
+            sharing = clip
+        } label: {
+            Image(systemName: "square.and.arrow.up")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(Theme.textPrimary)
+                .frame(width: 44, height: 44)
+                .background(.white.opacity(0.15), in: Circle())
+        }
+        .buttonStyle(PressableButtonStyle())
+        .accessibilityLabel("Share clip")
     }
 
     // MARK: Overlays

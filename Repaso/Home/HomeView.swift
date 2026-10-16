@@ -18,6 +18,9 @@ struct HomeView: View {
     @State private var showImport = false
     @State private var editingFolderID: UUID?
     @State private var deletingFolder: Folder?
+    /// Card order while a folder is being dragged; committed when the drag ends.
+    @State private var liveOrder: [UUID]?
+    @State private var settleCounts: [UUID: Int] = [:]
 
     private let columns = [GridItem(.flexible(), spacing: 14), GridItem(.flexible(), spacing: 14)]
 
@@ -33,7 +36,7 @@ struct HomeView: View {
                         if !folders.isEmpty {
                             Text("Folders").sectionLabelStyle()
                             LazyVGrid(columns: columns, spacing: 14) {
-                                ForEach(folders) { folder in
+                                ForEach(displayedFolders) { folder in
                                     folderCell(folder)
                                 }
                             }
@@ -45,11 +48,13 @@ struct HomeView: View {
                 .padding(.bottom, 140)
             }
             .scrollDismissesKeyboard(.interactively)
+            .dragTarget(env.drag) { $0.kind == .folder }   // catcher: dropping between cards keeps the live order
             .background(Theme.bg.ignoresSafeArea())
             .overlay(alignment: .bottom) {
                 FloatingPill(title: "Import videos", systemImage: "square.and.arrow.down") { showPicker = true }
             }
-            .photosPicker(isPresented: $showPicker, selection: $picks, matching: .videos, preferredItemEncoding: .current)
+            .photosPicker(isPresented: $showPicker, selection: $picks, matching: .videos,
+                         preferredItemEncoding: .current, photoLibrary: .shared())
             .onChange(of: picks) { _, new in
                 guard !new.isEmpty else { return }
                 env.importer.start(new, into: nil, context: ctx, env: env)
@@ -67,7 +72,21 @@ struct HomeView: View {
             }
             .toolbar(.hidden, for: .navigationBar)
             .toastHost(env)
+            .onChange(of: env.drag.active) { old, new in
+                if new?.kind == .folder, liveOrder == nil { liveOrder = folders.map(\.id) }
+                if new == nil, let old, old.kind == .folder { commitOrder(placed: old.id) }
+            }
         }
+    }
+
+    private var draggingFolderID: UUID? {
+        env.drag.active?.kind == .folder ? env.drag.active?.id : nil
+    }
+
+    private var displayedFolders: [Folder] {
+        guard let liveOrder else { return folders }
+        let byID = Dictionary(folders.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        return liveOrder.compactMap { byID[$0] } + folders.filter { !liveOrder.contains($0.id) }
     }
 
     // MARK: Sections
@@ -79,9 +98,11 @@ struct HomeView: View {
                     .font(.system(size: 40, weight: .bold))
                     .tracking(-1.2)
                     .foregroundStyle(Theme.textPrimary)
-                Text(subtitle)
-                    .font(.system(size: 15))
-                    .foregroundStyle(Theme.textSecondary)
+                Text(draggingFolderID == nil ? subtitle : "Drop to place")
+                    .font(.system(size: 15, weight: draggingFolderID == nil ? .regular : .semibold))
+                    .foregroundStyle(draggingFolderID == nil ? Theme.textSecondary : Theme.accent)
+                    .contentTransition(.opacity)
+                    .animation(.easeOut(duration: 0.2), value: draggingFolderID)
             }
             Spacer()
             Button(action: newFolder) {
@@ -150,6 +171,7 @@ struct HomeView: View {
         let editing = Binding(
             get: { editingFolderID == folder.id },
             set: { if !$0 { editingFolderID = nil } })
+        let isPlaceholder = draggingFolderID == folder.id
         // Not wrapped in a link while editing: a disabled link would disable the name field too.
         Group {
             if editingFolderID == folder.id {
@@ -161,6 +183,27 @@ struct HomeView: View {
                 .buttonStyle(PressableButtonStyle())
             }
         }
+        .opacity(isPlaceholder ? 0 : 1)
+        .overlay {
+            if isPlaceholder {
+                RoundedRectangle(cornerRadius: Theme.Radius.folderCard, style: .continuous)
+                    .strokeBorder(.white.opacity(0.25), style: StrokeStyle(lineWidth: 1.5, dash: [6, 5]))
+            }
+        }
+        .keyframeAnimator(initialValue: 1.0, trigger: settleCounts[folder.id, default: 0]) { view, scale in
+            view.scaleEffect(scale)
+        } keyframes: { _ in
+            KeyframeTrack {
+                LinearKeyframe(1.08, duration: 0)
+                CubicKeyframe(0.96, duration: 0.29)
+                CubicKeyframe(1, duration: 0.36)
+            }
+        }
+        .jiggle(draggingFolderID != nil && !isPlaceholder)
+        .dragSource(DragRef(kind: .folder, id: folder.id), drag: env.drag, origin: nil) {
+            FolderLiftPreview(name: folder.name, clipCount: FolderContents.clipCount(in: folder), reduceMotion: reduceMotion)
+        }
+        .dragTarget(env.drag, isTargeted: { if $0 { reorder(onto: folder.id) } }) { $0.kind == .folder }
         .contextMenu {
             Button("Rename", systemImage: "pencil") { editingFolderID = folder.id }
             Button("Move up", systemImage: "arrow.up") {
@@ -203,6 +246,21 @@ struct HomeView: View {
             }
             editingFolderID = created?.id
         }
+    }
+
+    /// Live reorder: the dragged card takes the hovered card's slot.
+    private func reorder(onto id: UUID) {
+        guard let dragged = draggingFolderID, dragged != id else { return }
+        withAnimation(reduceMotion ? .easeOut(duration: 0.2) : Theme.spring) {
+            liveOrder = FolderOrder.moving(dragged, onto: id, in: liveOrder ?? folders.map(\.id))
+        }
+    }
+
+    private func commitOrder(placed id: UUID) {
+        let ordered = displayedFolders
+        env.perform { try env.library(ctx).setFolderOrder(ordered) }
+        liveOrder = nil
+        if !reduceMotion { settleCounts[id, default: 0] += 1 }
     }
 
     private func requestDelete(_ folder: Folder) {

@@ -45,6 +45,14 @@ public struct LibraryService {
         try save()
     }
 
+    /// Persists a full sibling order (end of a Home reorder drag).
+    public func setFolderOrder(_ ordered: [Folder]) throws {
+        guard let parentID = ordered.first.map({ $0.parent?.id }) else { return }
+        guard ordered.allSatisfy({ $0.parent?.id == parentID }) else { throw LibraryError.invalidMoveTarget }
+        for (index, folder) in ordered.enumerated() { folder.sortIndex = index }
+        try save()
+    }
+
     public func reorderFolder(_ folder: Folder, by offset: Int) throws {
         let ordered = try siblings(of: folder.parent).sorted { $0.sortIndex < $1.sortIndex }
         guard let i = ordered.firstIndex(where: { $0.id == folder.id }) else { return }
@@ -101,8 +109,11 @@ public struct LibraryService {
     // MARK: Originals
 
     @discardableResult
-    public func addOriginal(title: String, fileName: String, duration: Double, recordedAt: Date?, to folder: Folder?) throws -> Original {
+    public func addOriginal(title: String, fileName: String, duration: Double, recordedAt: Date?, to folder: Folder?,
+                            instructors: [String] = [], event: String? = nil) throws -> Original {
         let original = Original(title: title, fileName: fileName, duration: duration, recordedAt: recordedAt, folder: folder)
+        original.instructors = TagText.normalized(instructors)
+        original.event = event.flatMap(Self.cleanName)
         context.insert(original)
         try save()
         return original
@@ -111,6 +122,17 @@ public struct LibraryService {
     public func moveOriginal(_ original: Original, to folder: Folder?) throws {
         original.folder = folder
         normaliseClips(in: [original])
+        try save()
+    }
+
+    /// Instructor and event tags for a batch of originals (the import sheet's fields).
+    public func setTags(_ originals: [Original], instructors: [String], event: String?) throws {
+        let names = TagText.normalized(instructors)
+        let cleanEvent = event.flatMap(Self.cleanName)
+        for original in originals {
+            original.instructors = names
+            original.event = cleanEvent
+        }
         try save()
     }
 
@@ -156,6 +178,21 @@ public struct LibraryService {
         clip.folder = folder
         if let original = clip.original { normaliseClips(in: [original]) }
         try save()
+    }
+
+    /// Files a clip by drag. nil when it already lives in `folder` (nothing changes).
+    public func dropClip(_ clip: Clip, on folder: Folder) throws -> ClipMoveReceipt? {
+        guard clip.effectiveFolder?.id != folder.id else { return nil }
+        let receipt = ClipMoveReceipt(clip: clip, previousFolder: clip.folder, destination: folder)
+        try moveClip(clip, to: folder)
+        return receipt
+    }
+
+    /// Puts a dropped clip back. A since-deleted previous folder means "with its video".
+    public func undo(_ receipt: ClipMoveReceipt) throws {
+        guard receipt.clip.modelContext != nil, !receipt.clip.isDeleted else { return }
+        let previous = receipt.previousFolder.flatMap { $0.modelContext == nil || $0.isDeleted ? nil : $0 }
+        try moveClip(receipt.clip, to: previous)
     }
 
     public func toggleFavorite(_ clip: Clip) throws {
