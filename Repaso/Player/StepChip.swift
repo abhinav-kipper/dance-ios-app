@@ -1,8 +1,8 @@
 import SwiftUI
 import RepasoCore
 
-/// Glass chip shown while stepping frames on a paused clip: where you are in the clip ("00:03.4 / 00:08.0"),
-/// with chevrons that ripple in the stepping direction on every frame and rest when you stop.
+/// A small, see-through readout shown while stepping frames ("‹‹‹ 00:03.4"), kept out of the way so the dancer
+/// stays visible. Tiny chevrons ripple in the stepping direction on every frame and rest when you stop.
 struct StepChip: View {
     let position: Double
     let length: Double
@@ -13,17 +13,18 @@ struct StepChip: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 4) {
             if direction < 0 { chevrons(pointing: "chevron.left") }
-            Text("\(TimeFormat.precise(position)) / \(TimeFormat.precise(length))")
-                .font(Theme.mono(15))
+            Text(TimeFormat.precise(position))
+                .font(Theme.mono(11))
                 .monospacedDigit()
             if direction > 0 { chevrons(pointing: "chevron.right") }
         }
-        .foregroundStyle(Theme.textPrimary)
-        .padding(.horizontal, 16)
-        .frame(height: 40)
-        .glassEffect(.regular.tint(Theme.overVideoTint), in: Capsule())
+        .foregroundStyle(.white.opacity(0.75))
+        .padding(.horizontal, 8)
+        .frame(height: 22)
+        .background(.black.opacity(0.22), in: Capsule())
+        .allowsHitTesting(false)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(String(format: "%.1f of %.1f seconds", position, length))
     }
@@ -33,10 +34,10 @@ struct StepChip: View {
         // The animation closure runs off the main actor, so it gets plain values.
         let still = reduceMotion
         let forward = direction > 0
-        return HStack(spacing: -3) {
+        return HStack(spacing: -2) {
             ForEach(0..<3, id: \.self) { i in
                 Image(systemName: symbol)
-                    .font(.system(size: 12, weight: .bold))
+                    .font(.system(size: 7, weight: .heavy))
                     .keyframeAnimator(initialValue: 1.0, trigger: tick) { view, phase in
                         view.opacity(still ? 0.6 : Self.opacity(index: i, phase: phase, forward: forward))
                     } keyframes: { _ in

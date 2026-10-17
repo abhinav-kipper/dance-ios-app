@@ -28,6 +28,14 @@ struct PlayerView: View {
     @State private var stepped = 0
     @State private var steps = 0
     @State private var showFrameChip = false
+    /// Studying frames (tap or hold a side, or drag sideways while paused): controls stay out of the way.
+    @State private var stepping = false
+    // Timeline scrubbing
+    @State private var scrubbing = false
+    // Cover shown while the next item's first frame loads (no black flash on swipe)
+    @State private var startFrames = StartFrames()
+    @State private var cover: CGImage?
+    @State private var coverTimeout: Task<Void, Never>?
     // Zoom and pan
     @State private var framing = Framing.identity
     @State private var baseFraming = Framing.identity
@@ -43,6 +51,7 @@ struct PlayerView: View {
     @State private var panelHidden = false
     @State private var panelHeight: CGFloat = 0
     @State private var panelDrag: CGFloat = 0
+    @State private var safeBottom: CGFloat = 0
     // Rename
     @State private var renaming = false
     @State private var nameDraft = ""
@@ -60,6 +69,7 @@ struct PlayerView: View {
     var body: some View {
         ZStack {
             Color.black.ignoresSafeArea()
+                .onGeometryChange(for: CGFloat.self) { $0.safeAreaInsets.bottom } action: { safeBottom = $0 }
             Group {
                 if model.missingFile {
                     missingFileCard
@@ -72,17 +82,21 @@ struct PlayerView: View {
             .offset(y: swipeOffset + entryOffset)
             .opacity(entryOpacity * (1 - min(abs(swipeOffset) / 260, 0.5)))
             VStack {
-                topBar
-                Spacer()
-                if showFrameChip {
-                    StepChip(position: model.positionInItem, length: model.itemLength,
-                             direction: model.lastStepDirection, tick: model.frameIndex)
-                        .padding(.bottom, 10)
-                        .transition(.opacity)
+                ZStack(alignment: .top) {
+                    topBar
+                    if showFrameChip {
+                        // Small and up top, where the top bar was: the dancer's body and feet stay clear.
+                        StepChip(position: model.positionInItem, length: model.itemLength,
+                                 direction: model.lastStepDirection, tick: model.frameIndex)
+                            .padding(.top, 18)
+                            .transition(.opacity)
+                    }
                 }
+                Spacer()
                 panel
             }
             .animation(.easeOut(duration: 0.2), value: showFrameChip)
+            .overlay(alignment: .bottom) { peekGrabber }
             if request.items.count > 1 {
                 PageIndicator(count: request.items.count, index: index)
                     .frame(maxWidth: .infinity, alignment: .trailing)
@@ -95,6 +109,7 @@ struct PlayerView: View {
         .sensoryFeedback(.impact(weight: .light), trigger: resets)
         .statusBarHidden()
         .persistentSystemOverlays(.hidden)
+        .defersSystemGestures(on: .bottom)   // dragging the grabber up mustn't go Home
         .onAppear {
             UIApplication.shared.isIdleTimerDisabled = true
             model.speed = speed
@@ -103,12 +118,18 @@ struct PlayerView: View {
         .onDisappear {
             UIApplication.shared.isIdleTimerDisabled = false
             idleTask?.cancel()
+            coverTimeout?.cancel()
             model.tearDown()
         }
         .onChange(of: speed) { _, new in model.speed = new }
         .onChange(of: model.isPlaying) { _, playing in
-            if playing { showFrameChip = false } else { showPanel() }   // paused: controls come back
-            wake()
+            if playing {
+                showFrameChip = false
+                stepping = false
+            } else if !stepping {
+                showPanel()   // paused with a tap: controls come back; paused by stepping: they stay away
+            }
+            if !stepping { wake() }
         }
         .onChange(of: model.frameIndex) { _, _ in
             if model.holdZone != .none { steps += 1 }   // a light tick per frame while holding
@@ -174,7 +195,7 @@ struct PlayerView: View {
             HStack(alignment: .firstTextBaseline) {
                 nameView
                 Spacer()
-                Text(TimeFormat.duration(item.length))
+                Text(scrubbing ? TimeFormat.precise(model.positionInItem) : TimeFormat.duration(item.length))
                     .font(Theme.mono(14))
                     .foregroundStyle(Theme.textSecondary)
             }
@@ -188,15 +209,7 @@ struct PlayerView: View {
                     .font(.system(size: 15))
                     .foregroundStyle(Theme.textPrimary)
             }
-            Capsule()
-                .fill(.white.opacity(0.18))
-                .frame(height: 3)
-                .overlay(alignment: .leading) {
-                    GeometryReader { geo in
-                        Capsule().fill(.white).frame(width: geo.size.width * model.progress)
-                    }
-                }
-                .accessibilityHidden(true)
+            scrubber
             SpeedControl(speed: $speed, onChange: wake)
             HStack(spacing: 8) {
                 loopButton
@@ -215,46 +228,135 @@ struct PlayerView: View {
         .padding(.bottom, 8)
         .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { panelHeight = $0 }
         .offset(y: panelOffset)
-        .opacity(panelHidden ? 0.6 : (chromeVisible || !model.isPlaying ? 1 : 0.42))
+        .opacity(panelOpacity)
+        .allowsHitTesting(!panelHidden)
+        .accessibilityHidden(panelHidden)
         .animation(reduceMotion ? .easeOut(duration: 0.2) : Theme.spring, value: panelHidden)
         .animation(.easeOut(duration: 0.6), value: chromeVisible)
         .simultaneousGesture(TapGesture().onEnded { wake() })
     }
 
-    /// Slid away = only the grabber peeks out (36pt); a drag follows the finger.
+    /// Slid away = entirely below the screen; only the separate peek grabber stays. A drag follows the finger.
     private var panelOffset: CGFloat {
-        let hiddenOffset = reduceMotion ? 0 : max(0, panelHeight - 44)
+        let hiddenOffset = reduceMotion ? 0 : panelHeight + 12 + safeBottom
         return max(0, (panelHidden ? hiddenOffset : 0) + panelDrag)
     }
 
-    /// Drag (or tap) the grabber to bring the panel up or send it down.
+    private var panelOpacity: Double {
+        if panelHidden {
+            // Fades in as it is dragged up from the bottom edge.
+            return reduceMotion ? 0 : min(1, Double(max(0, -panelDrag)) / 80)
+        }
+        return chromeVisible || !model.isPlaying ? 1 : 0.42
+    }
+
+    /// The grabber at the top of the open panel: drag it down (or tap) to send the panel away.
     private var grabber: some View {
         Capsule()
             .fill(.white.opacity(0.5))
             .frame(width: 40, height: 5)
             .frame(maxWidth: .infinity, minHeight: 30)
             .contentShape([.interaction, .accessibility], Rectangle())
-            .gesture(
-                DragGesture(minimumDistance: 4)
-                    .onChanged { value in
-                        panelDrag = panelHidden ? min(0, value.translation.height) : max(0, value.translation.height)
-                    }
-                    .onEnded { value in
-                        let dy = value.predictedEndTranslation.height
-                        withAnimation(reduceMotion ? .easeOut(duration: 0.2) : Theme.spring) {
-                            if panelHidden && dy < -30 { panelHidden = false }
-                            if !panelHidden && dy > 40 { panelHidden = true }
-                            panelDrag = 0
-                        }
-                        if !panelHidden { wake() }
-                    }
-            )
-            .onTapGesture {
-                withAnimation(reduceMotion ? .easeOut(duration: 0.2) : Theme.spring) { panelHidden.toggle() }
+            .gesture(grabberDrag)
+            .onTapGesture { setPanelHidden(true) }
+            .accessibilityLabel("Hide controls")
+            .accessibilityAddTraits(.isButton)
+    }
+
+    /// All that shows of the panel while it is away: a slim handle at the bottom edge. Drag it up (or tap) to bring the panel back.
+    private var peekGrabber: some View {
+        Color.clear
+            .frame(width: 140, height: 34)
+            .overlay {
+                Capsule()
+                    .fill(.white.opacity(0.55))
+                    .frame(width: 40, height: 5)
+                    .shadow(color: .black.opacity(0.45), radius: 2)
+                    .opacity(panelHidden && panelDrag == 0 ? 1 : 0)
+            }
+            .contentShape([.interaction, .accessibility], Rectangle())
+            .gesture(grabberDrag)
+            .onTapGesture { setPanelHidden(false) }
+            .padding(.bottom, 2)
+            .ignoresSafeArea(edges: .bottom)
+            .allowsHitTesting(panelHidden)
+            .accessibilityHidden(!panelHidden)
+            .accessibilityLabel("Show controls")
+            .accessibilityAddTraits(.isButton)
+            .animation(.easeOut(duration: 0.2), value: panelHidden)
+    }
+
+    private var grabberDrag: some Gesture {
+        DragGesture(minimumDistance: 4, coordinateSpace: .global)
+            .onChanged { value in
+                panelDrag = panelHidden ? min(0, value.translation.height) : max(0, value.translation.height)
+            }
+            .onEnded { value in
+                let dy = value.predictedEndTranslation.height
+                withAnimation(reduceMotion ? .easeOut(duration: 0.2) : Theme.spring) {
+                    if panelHidden && dy < -30 { panelHidden = false }
+                    else if !panelHidden && dy > 40 { panelHidden = true }
+                    panelDrag = 0
+                }
                 if !panelHidden { wake() }
             }
-            .accessibilityLabel(panelHidden ? "Show controls" : "Hide controls")
-            .accessibilityAddTraits(.isButton)
+    }
+
+    private func setPanelHidden(_ hidden: Bool) {
+        withAnimation(reduceMotion ? .easeOut(duration: 0.2) : Theme.spring) { panelHidden = hidden }
+        if !hidden { wake() }
+    }
+
+    /// The timeline: a slim line that can be tapped or dragged anywhere to move through the clip, like Cut's strip.
+    private var scrubber: some View {
+        GeometryReader { geo in
+            let width = max(1, geo.size.width)
+            let x = width * model.progress
+            ZStack(alignment: .leading) {
+                Capsule().fill(.white.opacity(0.18))
+                Capsule().fill(.white).frame(width: x.isFinite ? x : 0)
+            }
+            .frame(height: scrubbing ? 6 : 3)
+            .overlay(alignment: .leading) {
+                Circle()
+                    .fill(.white)
+                    .frame(width: 14, height: 14)
+                    .shadow(color: .black.opacity(0.35), radius: 3)
+                    .offset(x: (x.isFinite ? x : 0) - 7)
+                    .opacity(scrubbing ? 1 : 0)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { value in
+                        if !scrubbing {
+                            scrubbing = true
+                            model.beginScrub()
+                        }
+                        model.scrub(to: value.location.x / width)
+                        wake()
+                    }
+                    .onEnded { value in
+                        model.scrub(to: value.location.x / width)
+                        model.endScrub()
+                        scrubbing = false
+                        wake()
+                    }
+            )
+        }
+        .frame(height: 40)
+        .padding(.vertical, -14)   // a tall touch area without taking room in the panel
+        .animation(.easeOut(duration: 0.15), value: scrubbing)
+        .accessibilityElement()
+        .accessibilityLabel("Position")
+        .accessibilityValue("\(TimeFormat.precise(model.positionInItem)) of \(TimeFormat.precise(model.itemLength))")
+        .accessibilityAdjustableAction { direction in
+            let delta = direction == .increment ? 0.05 : -0.05
+            model.beginScrub()
+            model.scrub(to: model.progress + delta)
+            model.endScrub()
+        }
     }
 
     /// Clip names rename in place: tap, type, return.
@@ -405,7 +507,17 @@ struct PlayerView: View {
     // MARK: Video and gestures
 
     private var video: some View {
-        PlayerLayerView(player: model.player)
+        ZStack {
+            PlayerLayerView(player: model.player) { ready in
+                if ready { clearCover() }
+            }
+            if let cover {
+                Image(decorative: cover, scale: 1)
+                    .resizable()
+                    .scaledToFit()
+                    .transition(.opacity)
+            }
+        }
             .scaleEffect(framing.zoom)
             .offset(x: framing.panX * videoSize.width, y: framing.panY * videoSize.height)
             .clipped()
@@ -413,16 +525,26 @@ struct PlayerView: View {
             .onGeometryChange(for: CGSize.self) { $0.size } action: { videoSize = $0 }
             .animation(isPinching || gestureMode == .pan ? nil : Theme.motion(reduceMotion), value: framing)
             .contentShape(Rectangle())
-            .onTapGesture {
+            .onTapGesture(coordinateSpace: .local) { location in
                 // A long press also ends with a lift; that lift isn't a tap.
                 if let ended = holdEndedAt, Date.now.timeIntervalSince(ended) < 0.4 { return }
                 guard model.holdZone == .none else { return }
+                // Left third: back one frame; right third: forward one frame; centre: play/pause.
+                let step = HoldSeek.frameStep(for: HoldSeek.zone(forX: location.x, width: videoSize.width))
+                if step != 0, model.canStep {
+                    enterStepping()
+                    model.step(by: step)
+                    steps += 1
+                    showChip()
+                    return
+                }
                 model.togglePlay()
                 flash += 1
                 wake()
             }
             .gesture(HoldSeekGesture(onBegin: { zone in
-                guard !isPinching, gestureMode == nil else { return }
+                guard !isPinching, gestureMode == nil, HoldSeek.frameStep(for: zone) != 0, model.canStep else { return }
+                enterStepping()
                 model.beginHold(zone)
                 if model.holdZone != .none { showChip() }
             }, onEnd: {
@@ -444,6 +566,27 @@ struct PlayerView: View {
                 @unknown default: break
                 }
             }
+            .accessibilityAction(named: "Next frame") { accessibleStep(1) }
+            .accessibilityAction(named: "Previous frame") { accessibleStep(-1) }
+    }
+
+    private func accessibleStep(_ count: Int) {
+        guard model.canStep else { return }
+        enterStepping()
+        model.step(by: count)
+        showChip()
+    }
+
+    /// Frame study: the top bar and panel get out of the way and stay away until playback resumes.
+    private func enterStepping() {
+        stepping = true
+        idleTask?.cancel()
+        chromeVisible = false
+        renaming = false
+        guard !panelHidden else { return }
+        withAnimation(reduceMotion ? .easeOut(duration: 0.3) : .spring(response: 0.5, dampingFraction: 0.85)) {
+            panelHidden = true
+        }
     }
 
     /// One finger: swipe between clips, step frames when paused, or pan when zoomed (decided once per drag).
@@ -458,6 +601,7 @@ struct PlayerView: View {
                     gestureMode = PlayerGesture.classify(dx: dx, dy: dy, isZoomed: framing.isZoomed, isPlaying: model.isPlaying)
                     if gestureMode == .pan { baseFraming = framing }
                     if gestureMode == .scrub && !model.canStep { gestureMode = nil }
+                    if gestureMode == .scrub { enterStepping() }
                 }
                 switch gestureMode {
                 case .swipe:
@@ -477,7 +621,7 @@ struct PlayerView: View {
                 case nil:
                     break
                 }
-                wake()
+                if gestureMode != .scrub { wake() }
             }
             .onEnded { value in
                 defer {
@@ -494,7 +638,13 @@ struct PlayerView: View {
                 case .swipe: finishSwipe(dy: value.translation.height)
                 case .pan: saveFraming()
                 case .scrub: break   // the chip stays while paused; playing again hides it
-                case nil: break
+                case nil:
+                    // A quick flick can arrive with no move events in between: judge it by where it ended.
+                    let dx = value.translation.width, dy = value.translation.height
+                    if !isPinching, PlayerGesture.classify(dx: dx, dy: dy, isZoomed: framing.isZoomed,
+                                                           isPlaying: model.isPlaying) == .swipe {
+                        finishSwipe(dy: dy)
+                    }
                 }
             }
     }
@@ -546,8 +696,11 @@ struct PlayerView: View {
     private func loadCurrentClip() {
         framing = item.framing
         showFrameChip = false
+        stepping = false
         renaming = false
+        showCover()
         model.load(item, videos: env.videos)
+        prefetchNeighbours()
         if let clip { env.perform { try env.library(ctx).markPlayed(clip) } }
         showPanel()
         wake()
@@ -570,6 +723,32 @@ struct PlayerView: View {
 
     private func showChip() {
         showFrameChip = true
+    }
+
+    // MARK: Swipe cover
+
+    /// Puts the new item's first frame (decoded ahead) over the player until the player has drawn it.
+    private func showCover() {
+        cover = startFrames.images[StartFrames.key(item)]
+        coverTimeout?.cancel()
+        guard cover != nil else { return }
+        coverTimeout = Task {
+            try? await Task.sleep(for: .seconds(1.5))   // never leave a still frame up if the layer doesn't report
+            guard !Task.isCancelled else { return }
+            clearCover()
+        }
+    }
+
+    private func clearCover() {
+        guard cover != nil else { return }
+        coverTimeout?.cancel()
+        withAnimation(.easeOut(duration: 0.12)) { cover = nil }
+    }
+
+    private func prefetchNeighbours() {
+        let items = request.items
+        let nearby = [index - 1, index, index + 1].filter { items.indices.contains($0) }.map { items[$0] }
+        startFrames.prefetch(nearby, videos: env.videos)
     }
 
     // MARK: Overlays

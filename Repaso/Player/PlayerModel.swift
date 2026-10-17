@@ -20,6 +20,11 @@ final class PlayerModel {
     /// Hold-to-step in progress: the side of the video being held.
     private(set) var holdZone: HoldSeek.Zone = .none
     private var holdTask: Task<Void, Never>?
+    /// Dragging the timeline: the line follows the finger and seeks are chained so the latest position always wins.
+    private(set) var isScrubbing = false
+    private var scrubResume = false
+    private var scrubSeekInFlight = false
+    private var pendingScrubTime: Double?
 
     private var playbackRate: Float { Float(speed) }
 
@@ -148,6 +153,44 @@ final class PlayerModel {
         holdZone = .none
     }
 
+    // MARK: Scrubbing
+
+    func beginScrub() {
+        guard !isScrubbing else { return }
+        scrubResume = isPlaying
+        pause()
+        isScrubbing = true
+    }
+
+    /// Moves the playhead to `fraction` of the clip (0…1), showing exact frames as fast as the decoder allows.
+    func scrub(to fraction: Double) {
+        guard fraction.isFinite else { return }
+        let f = min(max(0, fraction), 1)
+        progress = f
+        currentTime = range.lowerBound + f * itemLength
+        pendingScrubTime = currentTime
+        seekToPendingScrub()
+    }
+
+    func endScrub() {
+        guard isScrubbing else { return }
+        isScrubbing = false
+        if scrubResume { play() }
+        scrubResume = false
+    }
+
+    private func seekToPendingScrub() {
+        guard !scrubSeekInFlight, let t = pendingScrubTime else { return }
+        pendingScrubTime = nil
+        scrubSeekInFlight = true
+        player.seek(to: CMTime(seconds: t, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] _ in
+            Task { @MainActor in
+                self?.scrubSeekInFlight = false
+                self?.seekToPendingScrub()
+            }
+        }
+    }
+
     func toggleLoop() { loop.loopEnabled.toggle() }
     func cycleGap() { loop.cycleGap() }
 
@@ -205,7 +248,7 @@ final class PlayerModel {
     }
 
     private func tick(_ t: Double) {
-        guard t.isFinite else { return }   // NaN while seeking or switching to AirPlay
+        guard t.isFinite, !isScrubbing else { return }   // NaN while seeking or switching to AirPlay
         currentTime = t
         let length = range.upperBound - range.lowerBound
         guard length > 0, restingSeconds == nil else { return }

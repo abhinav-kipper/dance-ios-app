@@ -36,7 +36,8 @@ final class WalkthroughTests: XCTestCase {
         sleep(1)
         snap("04-player-slow")
 
-        // Rename the clip by tapping its name in the panel
+        // Rename the clip by tapping its name in the panel (paused first, so the panel doesn't slide away mid-step)
+        app.descendants(matching: .any)["Video"].firstMatch.tap()
         app.showPlayerControls()
         app.descendants(matching: .any)["player-clip-name"].firstMatch.tap()   // the Player's label, not the list behind
         let nameField = app.textFields["Clip name"]
@@ -68,7 +69,10 @@ final class WalkthroughTests: XCTestCase {
         video.swipeDown()   // "Wrap and unwrap" is last in the folder, so go back one
         XCTAssertTrue(waitForLabel(of: pill, toDifferFrom: firstPosition), "swiping changes the clip")
         snap("04b-player-swiped")
-        video.swipeUp()
+        // On the picture, above the panel: a drag that starts on the timeline scrubs instead
+        let upper = video.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.55))
+        upper.press(forDuration: 0.05, thenDragTo: upper.withOffset(CGVector(dx: 0, dy: -260)), withVelocity: .fast,
+                    thenHoldForDuration: 0)
         XCTAssertTrue(waitForLabel(of: pill, toBe: firstPosition), "swiping the other way comes back")
 
         // Pinch to zoom, then reset
@@ -86,6 +90,8 @@ final class WalkthroughTests: XCTestCase {
         let chip = app.descendants(matching: .any).matching(NSPredicate(format: "label ENDSWITH %@", " seconds")).firstMatch
         XCTAssertTrue(chip.waitForExistence(timeout: 2), "frame stepping shows the step chip")
         snap("04d-player-frame-step")
+        video.tap()   // stepping keeps the top bar away; playing brings it back
+        XCTAssertTrue(close.waitForExistence(timeout: 3) && close.isHittable)
         close.tap()
 
         // Whole video from its thumbnail
