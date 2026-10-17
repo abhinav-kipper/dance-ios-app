@@ -197,6 +197,7 @@ struct HomeView: View {
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(RoundedRectangle(cornerRadius: Theme.Radius.listCard, style: .continuous))   // the whole tile taps
         .controlGlass(in: RoundedRectangle(cornerRadius: Theme.Radius.listCard, style: .continuous))
         .accessibilityElement(children: .combine)
     }

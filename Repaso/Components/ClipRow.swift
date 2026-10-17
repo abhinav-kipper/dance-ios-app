@@ -17,7 +17,8 @@ struct ClipActions {
     var folderName: String?
 }
 
-/// 60pt clip row: poster, name, duration, location tag; favorite, learned and play buttons.
+/// Clip row: poster, name (up to two lines), duration, location tag and small favorite/learned marks.
+/// Tapping anywhere plays; favorite, learned and everything else live in the long-press menu and the Player.
 struct ClipRow: View {
     enum Context { case underOriginal, loose }
 
@@ -36,34 +37,27 @@ struct ClipRow: View {
     @Environment(\.modelContext) private var ctx
 
     var body: some View {
-        HStack(spacing: 6) {
-            Button { actions.play(clip) } label: {
-                HStack(spacing: 10) {
-                    PosterView(request: clip.thumbnailRequest, cornerRadius: 10, live: clip.previewSource)
-                        .frame(width: 64, height: 44)
-                        .modifier(DeckMatch(id: clip.id, namespace: deckNamespace))
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(clip.name)
-                            .font(.system(size: 15, weight: .semibold))
-                            .foregroundStyle(Theme.textPrimary)
-                            .lineLimit(1)
-                        meta
-                    }
-                    Spacer(minLength: 0)
+        Button { actions.play(clip) } label: {
+            HStack(spacing: 10) {
+                PosterView(request: clip.thumbnailRequest, cornerRadius: 10, live: clip.previewSource)
+                    .frame(width: 64, height: 44)
+                    .modifier(DeckMatch(id: clip.id, namespace: deckNamespace))
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(clip.name)
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(Theme.textPrimary)
+                        .lineLimit(2)
+                        .multilineTextAlignment(.leading)
+                    meta
                 }
-                .contentShape(Rectangle())
+                Spacer(minLength: 0)
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel("\(clip.name), \(TimeFormat.duration(clip.length))")
-            .accessibilityHint("Plays the clip")
-
-            // Touching 44pt targets, no gaps: leaves room for the name and location tag.
-            HStack(spacing: 0) {
-                favoriteButton
-                learnedButton
-                playButton
-            }
+            .padding(.vertical, 6)
+            .contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
+        .accessibilityLabel(accessibilityText)
+        .accessibilityHint("Plays the clip")
         .frame(minHeight: 64)
         .opacity(isLifted ? 0.28 : 1)
         .scaleEffect(isLifted ? 0.97 : 1)
@@ -86,6 +80,16 @@ struct ClipRow: View {
     @ViewBuilder
     private var meta: some View {
         HStack(spacing: 8) {
+            if clip.isFavorite {
+                Image(systemName: "star.fill")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(Theme.rose)
+            }
+            if clip.isLearned {
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(Theme.accent)
+            }
             Text(TimeFormat.duration(clip.length))
                 .font(Theme.mono(12))
                 .foregroundStyle(Theme.textSecondary)
@@ -115,50 +119,11 @@ struct ClipRow: View {
         }
     }
 
-    private var favoriteButton: some View {
-        Button(action: toggleFavorite) {
-            Image(systemName: clip.isFavorite ? "star.fill" : "star")
-                .font(.system(size: 17, weight: .semibold))
-                .foregroundStyle(clip.isFavorite ? Theme.rose : Theme.textSecondary)
-                .symbolEffect(.bounce, value: clip.isFavorite)
-                .frame(width: 44, height: 44)
-                .contentShape([.interaction, .accessibility], Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel(clip.isFavorite ? "Remove from favorites" : "Add to favorites")
-    }
-
-    private var learnedButton: some View {
-        Button(action: toggleLearned) {
-            ZStack {
-                if clip.isLearned {
-                    Circle().fill(Theme.accent)
-                    Image(systemName: "checkmark")
-                        .font(.system(size: 12, weight: .bold))
-                        .foregroundStyle(Theme.onAccent)
-                } else {
-                    Circle().strokeBorder(.white.opacity(0.3), lineWidth: 1.5)
-                }
-            }
-            .frame(width: 26, height: 26)
-            .symbolEffect(.bounce, value: clip.isLearned)
-            .frame(width: 44, height: 44)
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel(clip.isLearned ? "Mark as not learned" : "Mark as learned")
-    }
-
-    private var playButton: some View {
-        Button { actions.play(clip) } label: {
-            Image(systemName: "play.fill")
-                .font(.system(size: 13, weight: .bold))
-                .foregroundStyle(Theme.textPrimary)
-                .frame(width: 36, height: 36)
-                .background(.white.opacity(0.15), in: Circle())
-                .frame(width: 44, height: 44)
-        }
-        .buttonStyle(PressableButtonStyle())
-        .accessibilityLabel("Play clip")
+    private var accessibilityText: String {
+        var parts = [clip.name, TimeFormat.duration(clip.length)]
+        if clip.isFavorite { parts.append("favorite") }
+        if clip.isLearned { parts.append("learned") }
+        return parts.joined(separator: ", ")
     }
 
     private var isLifted: Bool { env.drag.active?.id == clip.id }

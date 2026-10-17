@@ -17,6 +17,8 @@ struct PlayerView: View {
     @State private var flash = 0
     @State private var ringProgress: Double = 1
     @State private var deletingOriginal: Original?
+    @State private var librarySheet: LibrarySheet?
+    @State private var confirmingDelete = false
     @State private var sharing: Clip?
     @State private var index: Int
     // Swipe between clips
@@ -135,6 +137,12 @@ struct PlayerView: View {
             if model.holdZone != .none { steps += 1 }   // a light tick per frame while holding
         }
         .sheet(item: $sharing) { ShareSheet(clip: $0) }
+        .sheet(item: $librarySheet) { $0.content }
+        .confirmationDialog("Delete this clip?", isPresented: $confirmingDelete, titleVisibility: .visible) {
+            Button("Delete clip", role: .destructive, action: deleteCurrentClip)
+        } message: {
+            Text("The video stays in your library.")
+        }
         .sheet(item: $deletingOriginal) { original in
             DeleteOriginalSheet(original: original) { dismiss() }
         }
@@ -214,12 +222,12 @@ struct PlayerView: View {
             HStack(spacing: 8) {
                 loopButton
                 gapButton
-                Spacer()
-                if clip != nil {
-                    favoriteButton
-                    learnedButton
-                    shareButton
+                Spacer(minLength: 4)
+                if let clip {
+                    favoriteButton(clip)
+                    learnedButton(clip)
                 }
+                moreMenu
             }
         }
         .padding(.init(top: 6, leading: 16, bottom: 14, trailing: 16))
@@ -378,13 +386,7 @@ struct PlayerView: View {
                 .foregroundStyle(Theme.textPrimary)
                 .lineLimit(1)
                 .contentShape(Rectangle())
-                .onTapGesture {
-                    guard clip != nil else { return }
-                    nameDraft = ""   // empty: typing replaces the name; return with nothing keeps it
-                    renaming = true
-                    nameFocused = true
-                    showPanel()
-                }
+                .onTapGesture { startRenaming() }
                 .accessibilityAddTraits(clip == nil ? [] : .isButton)
                 .accessibilityHint(clip == nil ? "" : "Renames the clip")
                 .accessibilityIdentifier("player-clip-name")
@@ -454,54 +456,93 @@ struct PlayerView: View {
         .accessibilityLabel("Pause before repeat: \(gap == .none ? "none" : "\(gap.rawValue) seconds")")
     }
 
-    private var favoriteButton: some View {
+    // MARK: Clip buttons
+
+    private func favoriteButton(_ clip: Clip) -> some View {
         Button {
-            guard let clip else { return }
             env.perform { try env.library(ctx).toggleFavorite(clip) }
             wake()
         } label: {
-            Image(systemName: (clip?.isFavorite ?? false) ? "star.fill" : "star")
+            Image(systemName: clip.isFavorite ? "star.fill" : "star")
                 .font(.system(size: 17, weight: .semibold))
-                .foregroundStyle((clip?.isFavorite ?? false) ? Theme.rose : Theme.textPrimary)
-                .symbolEffect(.bounce, value: clip?.isFavorite ?? false)
+                .foregroundStyle(clip.isFavorite ? Theme.rose : Theme.textPrimary)
+                .symbolEffect(.bounce, value: clip.isFavorite)
                 .frame(width: 44, height: 44)
-                .background((clip?.isFavorite ?? false) ? Theme.roseTint : .white.opacity(0.15), in: Circle())
+                .background(clip.isFavorite ? Theme.roseTint : .white.opacity(0.15), in: Circle())
         }
         .buttonStyle(PressableButtonStyle())
-        .accessibilityLabel((clip?.isFavorite ?? false) ? "Remove from favorites" : "Add to favorites")
+        .accessibilityLabel(clip.isFavorite ? "Remove from favorites" : "Add to favorites")
     }
 
-    private var learnedButton: some View {
+    private func learnedButton(_ clip: Clip) -> some View {
         Button {
-            guard let clip else { return }
             env.perform { try env.library(ctx).toggleLearned(clip) }
             wake()
         } label: {
             Image(systemName: "checkmark")
                 .font(.system(size: 16, weight: .bold))
-                .foregroundStyle((clip?.isLearned ?? false) ? Theme.onAccent : Theme.textPrimary)
-                .symbolEffect(.bounce, value: clip?.isLearned ?? false)
+                .foregroundStyle(clip.isLearned ? Theme.onAccent : Theme.textPrimary)
+                .symbolEffect(.bounce, value: clip.isLearned)
                 .frame(width: 44, height: 44)
-                .background((clip?.isLearned ?? false) ? Theme.accent : .white.opacity(0.15), in: Circle())
+                .background(clip.isLearned ? Theme.accent : .white.opacity(0.15), in: Circle())
         }
         .buttonStyle(PressableButtonStyle())
-        .sensoryFeedback(.success, trigger: clip?.isLearned ?? false) { _, new in new }
-        .accessibilityLabel((clip?.isLearned ?? false) ? "Mark as not learned" : "Mark as learned")
+        .sensoryFeedback(.success, trigger: clip.isLearned) { _, new in new }
+        .accessibilityLabel(clip.isLearned ? "Mark as not learned" : "Mark as learned")
     }
 
-    private var shareButton: some View {
-        Button {
-            model.pause()
-            sharing = clip
+    /// Everything you can do to the clip or video without leaving the Player.
+    private var moreMenu: some View {
+        Menu {
+            if let clip {
+                Button("Rename", systemImage: "pencil") { startRenaming() }
+                Button("Move to folder…", systemImage: "folder") { librarySheet = .move(.clip(clip)) }
+                Button("Add to folders…", systemImage: "folder.badge.plus") { librarySheet = .link(.clip(clip)) }
+                Button("Share", systemImage: "square.and.arrow.up") {
+                    model.pause()
+                    sharing = clip
+                }
+                Divider()
+                Button("Delete clip", systemImage: "trash", role: .destructive) { confirmingDelete = true }
+            } else if let original = item.original {
+                Button("Move to folder…", systemImage: "folder") { librarySheet = .move(.original(original)) }
+                Button("Add to folders…", systemImage: "folder.badge.plus") { librarySheet = .link(.original(original)) }
+                Divider()
+                Button("Delete video", systemImage: "trash", role: .destructive) { deletingOriginal = original }
+            }
         } label: {
-            Image(systemName: "square.and.arrow.up")
-                .font(.system(size: 16, weight: .semibold))
+            Image(systemName: "ellipsis")
+                .font(.system(size: 17, weight: .bold))
                 .foregroundStyle(Theme.textPrimary)
                 .frame(width: 44, height: 44)
                 .background(.white.opacity(0.15), in: Circle())
+                .contentShape([.interaction, .accessibility], Circle())
         }
+        .menuStyle(.button)
         .buttonStyle(PressableButtonStyle())
-        .accessibilityLabel("Share clip")
+        // Keep the panel where it is while the menu is open: sliding it away underneath would move or close the menu.
+        .simultaneousGesture(TapGesture().onEnded { idleTask?.cancel() })
+        .accessibilityLabel("More actions")
+    }
+
+    private func startRenaming() {
+        guard clip != nil else { return }
+        nameDraft = ""   // empty: typing replaces the name; return with nothing keeps it
+        renaming = true
+        nameFocused = true
+        showPanel()
+    }
+
+    /// Closes the Player first: the clip must not be on screen when it is deleted.
+    private func deleteCurrentClip() {
+        guard let clip else { return }
+        let env = env
+        let ctx = ctx
+        dismiss()
+        Task {
+            try? await Task.sleep(for: .seconds(0.5))
+            env.perform { try env.library(ctx).deleteClip(clip) }
+        }
     }
 
     // MARK: Video and gestures
