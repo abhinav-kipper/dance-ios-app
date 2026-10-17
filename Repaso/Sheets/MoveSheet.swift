@@ -32,6 +32,13 @@ enum MoveSubject: Identifiable {
         }
     }
 
+    /// A new folder may go inside `folder` (a folder can't be created inside the one being moved).
+    func canContain(_ folder: Folder?) -> Bool {
+        guard let folder else { return false }
+        if case .folder(let moving) = self { return folder.id != moving.id && !folder.isDescendant(of: moving) }
+        return true
+    }
+
     var currentFolder: Folder? {
         switch self {
         case .clip(let c): c.folder
@@ -74,6 +81,12 @@ struct MoveSheet: View {
                     .padding(.top, 28)
                 ScrollView {
                     VStack(spacing: 2) {
+                        NewFolderRow(suggestedParent: subject.canContain(targetFolder) ? targetFolder : nil) { created in
+                            withAnimation(Theme.spring) {
+                                created.ancestors.forEach { expanded.insert($0.id) }
+                                selection = .folder(created.id)
+                            }
+                        }
                         rootRow
                         ForEach(rows) { row in folderRow(row) }
                     }

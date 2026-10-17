@@ -5,8 +5,6 @@ import RepasoCore
 /// Playback, mark state and filmstrip frames for Cut mode.
 @Observable @MainActor
 final class CutModel {
-    static let frameCount = 10
-
     let player = AVPlayer()
     let duration: Double
     private(set) var time: Double = 0
@@ -16,18 +14,20 @@ final class CutModel {
     var selectedID: UUID?
     /// Live range while a trim handle is dragged (saved on release).
     var draftRange: ClosedRange<Double>?
-    /// Window start held still while scrubbing or trimming.
-    var frozenWindowStart: Double?
-    private(set) var frames: [CGImage?] = Array(repeating: nil, count: frameCount)
+    /// Seconds across the filmstrip; pinching the strip changes it.
+    var visibleSeconds: Double
+    /// The strip is being scrolled or a handle dragged: the video follows the finger, not the other way round.
+    private(set) var isScrubbing = false
 
     private let videoURL: URL
-    private var frameCache: [Int: [CGImage?]] = [:]
+    private var tileCache: [String: CGImage] = [:]
     private var timeObserver: Any?
     private var scrubResume = false
 
     init(original: Original, videos: VideoStore) {
         duration = original.duration
         session = CutSession(duration: original.duration)
+        visibleSeconds = CutStrip.clampVisible(CutStrip.defaultVisible, duration: original.duration)
         videoURL = videos.url(for: original.fileName)
         missingFile = !FileManager.default.fileExists(atPath: videoURL.path)
         player.automaticallyWaitsToMinimizeStalling = false
@@ -74,11 +74,15 @@ final class CutModel {
     }
 
     func beginScrub() {
+        guard !isScrubbing else { return }
+        isScrubbing = true
         scrubResume = isPlaying
         pause()
     }
 
     func endScrub() {
+        guard isScrubbing else { return }
+        isScrubbing = false
         if scrubResume { play() }
         scrubResume = false
     }
@@ -92,35 +96,25 @@ final class CutModel {
 
     // MARK: Filmstrip
 
-    func windowStart(selected: Clip?) -> Double {
-        if let frozenWindowStart { return frozenWindowStart }
-        let center = selected.map { ($0.start + $0.end) / 2 } ?? time
-        return CutSession.windowStart(center: center, duration: duration)
+    /// Poster frame for one tile of the strip (the middle of its span), cached for the session.
+    func tileImage(span: Double, index: Int) async -> CGImage? {
+        let key = "\(span)-\(index)"
+        if let hit = tileCache[key] { return hit }
+        guard !missingFile else { return nil }
+        let image = await Self.frame(url: videoURL, at: min(duration, (Double(index) + 0.5) * span), tolerance: span / 2)
+        if tileCache.count > 600 { tileCache.removeAll() }   // a few MB at most; zooming a lot starts over
+        if let image { tileCache[key] = image }
+        return image
     }
 
-    func loadFrames(windowStart: Double) async {
-        let key = Int((windowStart * 10).rounded())
-        if let cached = frameCache[key] {
-            frames = cached
-            return
-        }
-        guard !missingFile else { return }
-        let generator = AVAssetImageGenerator(asset: AVURLAsset(url: videoURL))
+    nonisolated private static func frame(url: URL, at time: Double, tolerance: Double) async -> CGImage? {
+        let generator = AVAssetImageGenerator(asset: AVURLAsset(url: url))
         generator.appliesPreferredTrackTransform = true
         generator.maximumSize = CGSize(width: 120, height: 120)
-        let tolerance = CMTime(seconds: 0.5, preferredTimescale: 600)
-        generator.requestedTimeToleranceBefore = tolerance
-        generator.requestedTimeToleranceAfter = tolerance
-        let length = CutSession.windowLength(for: duration)
-        var loaded: [CGImage?] = []
-        for i in 0..<Self.frameCount {
-            let t = windowStart + length * (Double(i) + 0.5) / Double(Self.frameCount)
-            let image = try? await generator.image(at: CMTime(seconds: t, preferredTimescale: 600)).image
-            loaded.append(image)
-            if Task.isCancelled { return }
-        }
-        frameCache[key] = loaded
-        frames = loaded
+        let slack = CMTime(seconds: min(0.5, tolerance), preferredTimescale: 600)
+        generator.requestedTimeToleranceBefore = slack
+        generator.requestedTimeToleranceAfter = slack
+        return try? await generator.image(at: CMTime(seconds: time, preferredTimescale: 600)).image
     }
 
     private func tick(_ t: Double) {

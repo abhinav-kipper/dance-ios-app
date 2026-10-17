@@ -1,83 +1,182 @@
 import SwiftUI
 import RepasoCore
 
-/// Photos-style strip over a 40s window: clip ranges, recording range, trim handles, playhead.
+/// The whole video as a strip that scrolls under a fixed playhead in the middle, like Photos: scroll to move through
+/// the video (momentum included), pinch to zoom, tap a spot to bring it to the playhead. Clip ranges, the recording
+/// range and the trim handles ride on the strip.
 struct Filmstrip: View {
     @Bindable var model: CutModel
     let clips: [Clip]
     let onTrimEnd: (Clip, ClosedRange<Double>) -> Void
 
     private let height: CGFloat = 56
+    @State private var position = ScrollPosition(idType: Int.self)
+    @State private var width: CGFloat = 0
+    /// A finger (or its momentum) is moving the strip: the video follows the strip.
+    @State private var userScrolling = false
+    @State private var pinchBase: Double?
     private var selected: Clip? { clips.first { $0.id == model.selectedID } }
 
-    var body: some View {
-        let ws = model.windowStart(selected: selected)
-        let wl = CutSession.windowLength(for: model.duration)
-        VStack(spacing: 8) {
-            GeometryReader { geo in
-                let width = geo.size.width
-                // Never hand a non-finite position to layout: Core Animation aborts the app on NaN.
-                let x = { (t: Double) -> CGFloat in
-                    let v = CGFloat(CutSession.x(for: t, windowStart: ws, windowLength: wl, width: width))
-                    return v.isFinite ? v : 0
-                }
-                let clampX = { (t: Double) in min(max(0, x(t)), width) }
-                ZStack(alignment: .leading) {
-                    frames
-                    ForEach(clips.filter { $0.id != model.selectedID && $0.end > ws && $0.start < ws + wl }) { clip in
-                        range(from: clampX(clip.start), to: clampX(clip.end),
-                              fill: Theme.accent.opacity(0.22), border: Theme.accent.opacity(0.6), lineWidth: 2)
-                    }
-                    if let start = model.session.markStart {
-                        range(from: clampX(min(start, model.time)), to: clampX(max(start, model.time)),
-                              fill: Theme.rose.opacity(0.28), border: Theme.rose, lineWidth: 3)
-                    }
-                    if let selected {
-                        let r = model.draftRange ?? selected.start...selected.end
-                        range(from: x(r.lowerBound), to: x(r.upperBound),
-                              fill: Theme.accent.opacity(0.10), border: Theme.accent, lineWidth: 3)
-                        handle(at: x(r.lowerBound), isStart: true, clip: selected, range: r, ws: ws, wl: wl, width: width)
-                        handle(at: x(r.upperBound), isStart: false, clip: selected, range: r, ws: ws, wl: wl, width: width)
-                    }
-                    playhead(at: x(model.time), width: width)
-                }
-                .frame(width: width, height: height, alignment: .leading)
-                .contentShape(Rectangle())
-                .coordinateSpace(.named("strip"))
-                .gesture(scrub(ws: ws, wl: wl, width: width))
-            }
-            .frame(height: height)
-            .task(id: Int((ws * 10).rounded())) { await model.loadFrames(windowStart: ws) }
+    private var pps: Double { CutStrip.pointsPerSecond(visible: model.visibleSeconds, width: width) }
 
-            HStack {
-                Text(TimeFormat.range(ws))
-                Spacer()
-                Text(selected == nil ? "Drag to scrub" : "Drag the handles to trim")
-                Spacer()
-                Text(TimeFormat.range(ws + wl))
+    var body: some View {
+        VStack(spacing: 8) {
+            ZStack {
+                strip
+                playhead
             }
-            .font(.system(size: 12))
-            .foregroundStyle(Theme.textSecondary)
+            .frame(height: height + 12)
+            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { new in
+                width = new
+                scrollAfterLayout()
+            }
+            labels
         }
+    }
+
+    // MARK: Strip
+
+    private var strip: some View {
+        let pps = pps
+        let contentWidth = CutStrip.contentWidth(duration: model.duration, pointsPerSecond: pps, visibleWidth: width)
+        return ScrollView(.horizontal, showsIndicators: false) {
+            ZStack(alignment: .leading) {
+                tiles(pps: pps)
+                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    .padding(.leading, width / 2)
+                ForEach(clips.filter { $0.id != model.selectedID }) { clip in
+                    range(from: x(clip.start), to: x(clip.end),
+                          fill: Theme.accent.opacity(0.22), border: Theme.accent.opacity(0.6), lineWidth: 2)
+                }
+                if let start = model.session.markStart {
+                    range(from: x(min(start, model.time)), to: x(max(start, model.time)),
+                          fill: Theme.rose.opacity(0.28), border: Theme.rose, lineWidth: 3)
+                }
+                if let selected {
+                    let r = model.draftRange ?? selected.start...selected.end
+                    range(from: x(r.lowerBound), to: x(r.upperBound),
+                          fill: Theme.accent.opacity(0.10), border: Theme.accent, lineWidth: 3)
+                    handle(at: x(r.lowerBound), isStart: true, clip: selected, range: r)
+                    handle(at: x(r.upperBound), isStart: false, clip: selected, range: r)
+                }
+            }
+            .frame(width: max(contentWidth, width), height: height, alignment: .leading)
+            .contentShape(Rectangle())
+            .coordinateSpace(.named("strip"))
+            .onTapGesture(coordinateSpace: .named("strip")) { location in
+                model.seek(time(atContentX: location.x))   // the strip follows the new time to the playhead
+            }
+        }
+        .scrollPosition($position)
+        .scrollDisabled(model.draftRange != nil)   // trimming: the handle moves, not the strip
+        .onScrollPhaseChange { _, phase in
+            guard pinchBase == nil else { return }
+            switch phase {
+            case .tracking, .interacting, .decelerating:
+                if !userScrolling {
+                    userScrolling = true
+                    model.beginScrub()
+                }
+            case .idle, .animating:
+                if userScrolling {
+                    userScrolling = false
+                    model.seek(model.time)   // settle on the exact frame
+                    model.endScrub()
+                }
+            }
+        }
+        .onScrollGeometryChange(for: Double.self) { $0.contentOffset.x } action: { _, x in
+            guard userScrolling, pinchBase == nil else { return }
+            model.seek(CutStrip.time(forOffset: x, pointsPerSecond: pps, duration: model.duration), precise: false)
+        }
+        .onChange(of: model.time) { _, _ in
+            if !userScrolling && pinchBase == nil { scrollToTime() }
+        }
+        .onChange(of: model.visibleSeconds) { _, _ in scrollAfterLayout() }
+        .simultaneousGesture(pinch)
+    }
+
+    private func tiles(pps: Double) -> some View {
+        let span = CutStrip.tileSpan(pointsPerSecond: pps)
+        let count = CutStrip.tileCount(duration: model.duration, span: span)
+        let tileWidth = span * pps
+        let lastWidth = max(1, (model.duration - span * Double(max(0, count - 1))) * pps)
+        return LazyHStack(spacing: 0) {
+            ForEach(0..<count, id: \.self) { i in
+                StripTile(model: model, span: span, index: i)
+                    .frame(width: i == count - 1 ? lastWidth : tileWidth, height: height)
+            }
+        }
+        .frame(height: height)
+    }
+
+    /// Pinch the strip to see more or less of the video at once; the time under the playhead stays put.
+    private var pinch: some Gesture {
+        MagnifyGesture()
+            .onChanged { value in
+                if pinchBase == nil { pinchBase = model.visibleSeconds }
+                guard let base = pinchBase, value.magnification > 0 else { return }
+                model.visibleSeconds = CutStrip.clampVisible(base / value.magnification, duration: model.duration)
+            }
+            .onEnded { _ in
+                pinchBase = nil
+                scrollAfterLayout()
+            }
+    }
+
+    // MARK: Positions
+
+    /// Content x of time `t` (the strip is padded by half its width on each side).
+    private func x(_ t: Double) -> CGFloat {
+        let v = CGFloat(Double(width) / 2 + t * pps)
+        return v.isFinite ? v : 0   // never hand a non-finite position to layout
+    }
+
+    private func time(atContentX x: CGFloat) -> Double {
+        CutStrip.time(forOffset: Double(x - width / 2), pointsPerSecond: pps, duration: model.duration)
+    }
+
+    private func scrollToTime() {
+        let x = CutStrip.offset(for: model.time, pointsPerSecond: pps, duration: model.duration)
+        guard x.isFinite else { return }
+        position.scrollTo(x: x)
+    }
+
+    /// After a zoom or resize the strip's width changes; scroll once the new width is laid out.
+    private func scrollAfterLayout() {
+        Task { @MainActor in scrollToTime() }
     }
 
     // MARK: Layers
 
-    private var frames: some View {
-        HStack(spacing: 0) {
-            ForEach(0..<CutModel.frameCount, id: \.self) { i in
-                Rectangle()
-                    .fill(.white.opacity(0.06))
-                    .overlay {
-                        if let image = model.frames[i] {
-                            Image(decorative: image, scale: 1).resizable().scaledToFill()
-                        }
-                    }
-                    .clipped()
+    private var playhead: some View {
+        RoundedRectangle(cornerRadius: 2)
+            .fill(Theme.textPrimary)
+            .frame(width: 3, height: height + 12)
+            .shadow(color: .white.opacity(0.6), radius: 4)
+            .frame(width: 44)
+            .contentShape(.accessibility, Rectangle())   // a 44pt target for VoiceOver, though the line is 3pt
+            .allowsHitTesting(false)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Playhead")
+            .accessibilityValue("\(TimeFormat.precise(model.time)) of \(TimeFormat.precise(model.duration))")
+            .accessibilityHint("Swipe up or down to move one second")
+            .accessibilityAdjustableAction { direction in
+                model.seek(model.time + (direction == .increment ? 1 : -1))
             }
+    }
+
+    private var labels: some View {
+        let half = model.visibleSeconds / 2
+        return HStack {
+            Text(TimeFormat.range(max(0, model.time - half)))
+            Spacer()
+            Text(selected == nil ? "Scroll to move · pinch to zoom" : "Drag the handles to trim")
+            Spacer()
+            Text(TimeFormat.range(min(model.duration, model.time + half)))
         }
-        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-        .accessibilityHidden(true)
+        .font(.system(size: 12))
+        .foregroundStyle(Theme.textSecondary)
     }
 
     private func range(from left: CGFloat, to right: CGFloat, fill: Color, border: Color, lineWidth: CGFloat) -> some View {
@@ -95,18 +194,7 @@ struct Filmstrip: View {
         .allowsHitTesting(false)
     }
 
-    private func playhead(at x: CGFloat, width: CGFloat) -> some View {
-        RoundedRectangle(cornerRadius: 2)
-            .fill(Theme.textPrimary)
-            .frame(width: 3, height: height + 12)
-            .shadow(color: .white.opacity(0.6), radius: 4)
-            .offset(x: x - 1.5)
-            .opacity(x < -2 || x > width + 2 ? 0 : 1)
-            .allowsHitTesting(false)
-    }
-
-    private func handle(at x: CGFloat, isStart: Bool, clip: Clip, range: ClosedRange<Double>,
-                        ws: Double, wl: Double, width: CGFloat) -> some View {
+    private func handle(at x: CGFloat, isStart: Bool, clip: Clip, range: ClosedRange<Double>) -> some View {
         RoundedRectangle(cornerRadius: 4, style: .continuous)
             .fill(Theme.accent)
             .frame(width: 16, height: height)
@@ -120,11 +208,8 @@ struct Filmstrip: View {
             .highPriorityGesture(
                 DragGesture(minimumDistance: 0, coordinateSpace: .named("strip"))
                     .onChanged { value in
-                        if model.frozenWindowStart == nil {
-                            model.frozenWindowStart = ws
-                            model.beginScrub()
-                        }
-                        let t = CutSession.time(forX: value.location.x, windowStart: ws, windowLength: wl, width: width)
+                        model.beginScrub()
+                        let t = time(atContentX: value.location.x)
                         let current = model.draftRange ?? range
                         let next = isStart ? CutSession.trimStart(current, to: t)
                                            : CutSession.trimEnd(current, to: t, duration: model.duration)
@@ -134,8 +219,8 @@ struct Filmstrip: View {
                     .onEnded { _ in
                         if let r = model.draftRange { onTrimEnd(clip, r) }
                         model.draftRange = nil
-                        model.frozenWindowStart = nil
                         model.endScrub()
+                        scrollToTime()
                     })
             .accessibilityElement()
             .accessibilityLabel(isStart ? "Clip start" : "Clip end")
@@ -147,22 +232,22 @@ struct Filmstrip: View {
                 onTrimEnd(clip, next)
             }
     }
+}
 
-    private func scrub(ws: Double, wl: Double, width: CGFloat) -> some Gesture {
-        DragGesture(minimumDistance: 0, coordinateSpace: .named("strip"))
-            .onChanged { value in
-                if model.frozenWindowStart == nil {
-                    model.frozenWindowStart = ws
-                    model.beginScrub()
-                }
-                let t = CutSession.time(forX: value.location.x, windowStart: ws, windowLength: wl, width: width)
-                model.seek(t, precise: false)
+/// One thumbnail of the strip, loaded when it scrolls into view.
+private struct StripTile: View {
+    let model: CutModel
+    let span: Double
+    let index: Int
+    @State private var image: CGImage?
+
+    var body: some View {
+        Rectangle()
+            .fill(.white.opacity(0.06))
+            .overlay {
+                if let image { Image(decorative: image, scale: 1).resizable().scaledToFill() }
             }
-            .onEnded { value in
-                let t = CutSession.time(forX: value.location.x, windowStart: ws, windowLength: wl, width: width)
-                model.seek(t)
-                model.frozenWindowStart = nil
-                model.endScrub()
-            }
+            .clipped()
+            .task(id: "\(span)-\(index)") { image = await model.tileImage(span: span, index: index) }
     }
 }

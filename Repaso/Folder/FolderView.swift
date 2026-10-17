@@ -124,8 +124,15 @@ struct FolderView: View {
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Button {
-                if !path.isEmpty { path.removeLast() } else { dismiss() }
+            // Tap goes back one level; press and hold lists every level above (like Safari's back button).
+            Menu {
+                Button("Home", systemImage: "house") { path.removeAll() }
+                let chain = folder?.ancestors ?? []
+                ForEach(Array(chain.enumerated()), id: \.element.id) { i, ancestor in
+                    Button(ancestor.name, systemImage: "folder") {
+                        path = chain.prefix(i + 1).map { Route.folder($0.id) }
+                    }
+                }
             } label: {
                 HStack(spacing: 4) {
                     Image(systemName: "chevron.left").font(.system(size: 15, weight: .semibold))
@@ -134,9 +141,13 @@ struct FolderView: View {
                 .foregroundStyle(Theme.accent)
                 .frame(minHeight: 44)
                 .contentShape([.interaction, .accessibility], Rectangle())
+            } primaryAction: {
+                if !path.isEmpty { path.removeLast() } else { dismiss() }
             }
+            .menuStyle(.button)
             .buttonStyle(.plain)
             .accessibilityLabel("Back to \(folder?.parent?.name ?? "Home")")
+            .accessibilityHint("Press and hold to jump to Home or a folder above")
 
             if let folder, !folder.ancestors.isEmpty {
                 Text((["Home"] + folder.ancestors.map(\.name) + [folder.name]).joined(separator: " › "))

@@ -13,6 +13,8 @@ struct CutView: View {
     @State private var markCount = 0
     /// Set by the "Name" button on the clip-added toast: the tray starts renaming that clip.
     @State private var renameRequest: UUID?
+    /// Swipe down on the video to close Cut, like closing a photo.
+    @State private var closeDrag: CGFloat = 0
 
     private var clips: [Clip] {
         FolderContents.sortClips(original.clips, by: .dateAdded)
@@ -37,19 +39,22 @@ struct CutView: View {
     }
 
     private func content(_ model: CutModel) -> some View {
-        VStack(spacing: 18) {
+        // The video takes every point the controls don't need.
+        VStack(spacing: 12) {
             video(model)
-            timeRow(model)
-            markButton(model)
+                .frame(maxHeight: .infinity)
+            transportRow(model)
                 .padding(.horizontal, Theme.gutter)
             Filmstrip(model: model, clips: clips) { clip, range in
                 env.perform { try env.library(ctx).updateRange(clip, start: range.lowerBound, end: range.upperBound) }
             }
             .padding(.horizontal, Theme.gutter)
+            markButton(model)
+                .padding(.horizontal, Theme.gutter)
             ClipTray(model: model, clips: clips, renameRequest: $renameRequest) { clip, name in
                 env.perform { try env.library(ctx).updateInfo(clip, name: name, note: clip.note ?? "") }
             }
-            Spacer(minLength: 0)
+            .padding(.bottom, 4)
         }
         .ignoresSafeArea(edges: .top)
     }
@@ -65,6 +70,7 @@ struct CutView: View {
                 PlayerLayerView(player: model.player)
                     .contentShape(Rectangle())
                     .onTapGesture { model.togglePlay() }
+                    .gesture(closeGesture(model))
                     .accessibilityLabel(model.isPlaying ? "Pause" : "Play")
                     .accessibilityAddTraits(.isButton)
             }
@@ -102,41 +108,67 @@ struct CutView: View {
             .padding(.horizontal, 16)
             .padding(.top, 58)
         }
-        .frame(height: 430)
         .clipShape(UnevenRoundedRectangle(bottomLeadingRadius: 34, bottomTrailingRadius: 34, style: .continuous))
+        .offset(y: closeDrag)
+        .scaleEffect(1 - min(closeDrag, 300) / 1500, anchor: .top)
+    }
+
+    /// Pull the video down to close; a short pull springs back.
+    private func closeGesture(_ model: CutModel) -> some Gesture {
+        DragGesture(minimumDistance: 12)
+            .onChanged { value in
+                let dy = value.translation.height
+                guard dy > 0, dy > abs(value.translation.width) else { return }
+                closeDrag = dy * 0.6
+            }
+            .onEnded { value in
+                if value.translation.height > 110 || value.predictedEndTranslation.height > 260 {
+                    model.session.cancelMark()
+                    dismiss()
+                } else {
+                    withAnimation(Theme.motion(reduceMotion)) { closeDrag = 0 }
+                }
+            }
     }
 
     // MARK: Controls
 
-    private func timeRow(_ model: CutModel) -> some View {
-        VStack(spacing: 12) {
-            Text("\(Text(TimeFormat.precise(model.time)).foregroundStyle(Theme.textPrimary))\(Text(" / \(TimeFormat.precise(model.duration))").foregroundStyle(Theme.textSecondary.opacity(0.7)))")
-                .font(Theme.mono(30, weight: .semibold))
-                .monospacedDigit()
-                .accessibilityLabel("\(TimeFormat.precise(model.time)) of \(TimeFormat.precise(model.duration))")
-            HStack(spacing: 28) {
-                Button { model.jump(-5) } label: {
-                    Text("−5s").font(.system(size: 15, weight: .semibold)).foregroundStyle(Theme.textPrimary)
-                        .frame(width: 56, height: 44)
-                }
-                .controlGlass(in: Capsule())
-                .accessibilityLabel("Back 5 seconds")
-                Button { model.togglePlay() } label: {
-                    Image(systemName: model.isPlaying ? "pause.fill" : "play.fill")
-                        .font(.system(size: 22, weight: .bold))
-                        .foregroundStyle(Theme.onAccent)
-                        .frame(width: 56, height: 56)
-                        .background(Theme.primaryButton, in: Circle())
-                }
-                .buttonStyle(PressableButtonStyle())
-                .accessibilityLabel(model.isPlaying ? "Pause" : "Play")
-                Button { model.jump(5) } label: {
-                    Text("+5s").font(.system(size: 15, weight: .semibold)).foregroundStyle(Theme.textPrimary)
-                        .frame(width: 56, height: 44)
-                }
-                .controlGlass(in: Capsule())
-                .accessibilityLabel("Forward 5 seconds")
+    /// Time on the left, −5s / play / +5s on the right: one compact row so the video gets the room.
+    private func transportRow(_ model: CutModel) -> some View {
+        HStack(spacing: 10) {
+            VStack(alignment: .leading, spacing: 1) {
+                Text(TimeFormat.precise(model.time))
+                    .font(Theme.mono(20, weight: .semibold))
+                    .foregroundStyle(Theme.textPrimary)
+                Text("of \(TimeFormat.precise(model.duration))")
+                    .font(Theme.mono(12))
+                    .foregroundStyle(Theme.textSecondary.opacity(0.8))
             }
+            .monospacedDigit()
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("\(TimeFormat.precise(model.time)) of \(TimeFormat.precise(model.duration))")
+            Spacer(minLength: 0)
+            Button { model.jump(-5) } label: {
+                Text("−5s").font(.system(size: 15, weight: .semibold)).foregroundStyle(Theme.textPrimary)
+                    .frame(width: 56, height: 44)
+            }
+            .controlGlass(in: Capsule())
+            .accessibilityLabel("Back 5 seconds")
+            Button { model.togglePlay() } label: {
+                Image(systemName: model.isPlaying ? "pause.fill" : "play.fill")
+                    .font(.system(size: 20, weight: .bold))
+                    .foregroundStyle(Theme.onAccent)
+                    .frame(width: 50, height: 50)
+                    .background(Theme.primaryButton, in: Circle())
+            }
+            .buttonStyle(PressableButtonStyle())
+            .accessibilityLabel(model.isPlaying ? "Pause" : "Play")
+            Button { model.jump(5) } label: {
+                Text("+5s").font(.system(size: 15, weight: .semibold)).foregroundStyle(Theme.textPrimary)
+                    .frame(width: 56, height: 44)
+            }
+            .controlGlass(in: Capsule())
+            .accessibilityLabel("Forward 5 seconds")
         }
     }
 
@@ -162,7 +194,7 @@ struct CutView: View {
             .font(.system(size: 18, weight: .bold))
             .foregroundStyle(Theme.onAccent)
             .frame(maxWidth: .infinity)
-            .frame(height: 60)
+            .frame(height: 54)
             .background(recording ? Theme.rose : Theme.accent, in: Capsule())
             .animation(.easeInOut(duration: 0.35), value: recording)
         }

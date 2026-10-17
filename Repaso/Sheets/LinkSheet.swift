@@ -64,13 +64,11 @@ struct LinkSheet: View {
                     .foregroundStyle(Theme.textSecondary)
             }
             .padding(.top, 28)
-            if roots.isEmpty {
-                Text("Make a folder on Home first.")
-                    .font(.system(size: 15))
-                    .foregroundStyle(Theme.textSecondary)
-            }
             ScrollView {
                 VStack(spacing: 2) {
+                    NewFolderRow { created in
+                        withAnimation(Theme.spring) { _ = selected.insert(created.id) }
+                    }
                     ForEach(rows) { row in folderRow(row) }
                 }
             }
