@@ -1,6 +1,6 @@
 import XCTest
 
-/// The how-to guide from Home, an empty Unsorted, a video's note on Full videos, and a clip's "Name & note…".
+/// The how-to guide from Home, Unsorted holding a video left half-way, and a clip's "Name & note…".
 /// Needs `seed.mov` in the app's Documents folder (see DemoSeed); skipped otherwise.
 @MainActor
 final class GuideAndNotesTests: XCTestCase {
@@ -25,22 +25,13 @@ final class GuideAndNotesTests: XCTestCase {
         app.buttons["Start practising"].tap()
         XCTAssertTrue(app.buttons["New folder"].waitForExistence(timeout: 3), "the guide closes back to Home")
 
-        // Unsorted only holds what still needs sorting: Saturday social has a clip (filed in Footwork), so nothing
-        XCTAssertFalse(button(beginningWith: "Unsorted").exists, "nothing to sort, so no Unsorted tile")
-
-        // Full videos: Saturday social is kept there. Edit details: its note shows on its card
-        button(beginningWith: "Videos").tap()
-        XCTAssertTrue(app.staticTexts["Saturday social"].waitForExistence(timeout: 5))
-        snap("22-full-videos")
-        app.staticTexts["Saturday social"].press(forDuration: 1.0)
-        app.buttons["Edit details…"].tap()
-        let note = app.textViews["Note"].exists ? app.textViews["Note"] : app.textFields["Note"]
-        XCTAssertTrue(note.waitForExistence(timeout: 3))
-        note.tap()
-        note.typeText("Social: watch the lead's frame")
-        app.buttons["Save"].tap()
-        XCTAssertTrue(app.staticTexts["Social: watch the lead's frame"].waitForExistence(timeout: 4), "the note shows on the card")
-        snap("23-video-note")
+        // Unsorted holds the video left half-way through the guide (Sunday, one clip named)
+        let unsorted = button(beginningWith: "Unsorted · 1")
+        XCTAssertTrue(unsorted.exists, "a video still to go through shows the Unsorted tile")
+        unsorted.tap()
+        XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "1 clip so far")).firstMatch
+            .waitForExistence(timeout: 5), "with what was made so far")
+        snap("22-unsorted")
 
         // A clip's long-press menu offers Name & note
         app.buttons["Back to Home"].firstMatch.tap()

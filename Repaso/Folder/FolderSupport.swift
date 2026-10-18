@@ -1,28 +1,24 @@
 import SwiftUI
 import RepasoCore
 
-/// Opens the Player on `items[index]`.
-/// Opens the cutter on a video; with `focusClipID`, that clip starts selected (Trim…).
+/// Opens the cutter on a clip's recording with that clip selected (Trim…).
 struct CutRequest: Identifiable {
     let id = UUID()
-    let original: Original
+    let recording: Recording
     var focusClipID: UUID?
 }
 
+/// Opens the Player on `items[index]`; swiping moves through `items`.
 struct PlayerRequest: Identifiable {
     let id = UUID()
-    let items: [PlaybackItem]
+    let items: [Clip]
     let index: Int
     let title: String
 
-    init(items: [PlaybackItem], index: Int, title: String) {
-        self.items = items
+    init(queue: [Clip], index: Int, title: String) {
+        self.items = queue
         self.index = index
         self.title = title
-    }
-
-    init(queue: [Clip], index: Int, title: String) {
-        self.init(items: queue.map(PlaybackItem.clip), index: index, title: title)
     }
 }
 
@@ -30,21 +26,17 @@ struct PlayerRequest: Identifiable {
 enum LibrarySheet: Identifiable {
     case move(MoveSubject)
     case info(Clip)
-    case videoInfo(Original)
-    case deleteOriginal(Original)
     case deleteFolder(Folder)
     case share(Clip)
-    case link(LinkSubject)
+    case link(Clip)
 
     var id: String {
         switch self {
         case .move(let s): "move-\(s.id)"
         case .info(let c): "info-\(c.id)"
-        case .videoInfo(let o): "vinfo-\(o.id)"
-        case .deleteOriginal(let o): "delo-\(o.id)"
         case .deleteFolder(let f): "delf-\(f.id)"
         case .share(let c): "share-\(c.id)"
-        case .link(let s): "link-\(s.id)"
+        case .link(let c): "link-\(c.id)"
         }
     }
 
@@ -53,11 +45,9 @@ enum LibrarySheet: Identifiable {
         switch self {
         case .move(let subject): MoveSheet(subject: subject)
         case .info(let clip): ClipInfoSheet(clip: clip)
-        case .videoInfo(let original): VideoInfoSheet(original: original)
-        case .deleteOriginal(let original): DeleteOriginalSheet(original: original)
         case .deleteFolder(let folder): DeleteFolderSheet(folder: folder)
         case .share(let clip): ShareSheet(clip: clip)
-        case .link(let subject): LinkSheet(subject: subject)
+        case .link(let clip): LinkSheet(clip: clip)
         }
     }
 }

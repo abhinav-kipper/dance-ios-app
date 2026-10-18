@@ -19,10 +19,6 @@ struct LibraryServiceTests {
         lib = LibraryService(context: ctx) { files, _ in box.files += files }
     }
 
-    func original(_ title: String = "Class", in folder: Folder? = nil, duration: Double = 120) throws -> Original {
-        try lib.addOriginal(title: title, fileName: "\(title).mov", duration: duration, recordedAt: nil, to: folder)
-    }
-
     // MARK: Folders
 
     @Test func createFolderInsertsAtTopWithDefaultName() throws {
@@ -49,127 +45,87 @@ struct LibraryServiceTests {
         #expect(b.sortIndex == 1)
     }
 
-    @Test func deleteContentsCascadesClipsFiledElsewhere() throws {
+    @Test func deleteContentsDeletesClipsLivingThere() throws {
         let turns = try lib.createFolder(named: "Turns", in: nil)
         let sub = try lib.createFolder(named: "Sub", in: turns)
         let other = try lib.createFolder(named: "Other", in: nil)
-        let o = try original("Thursday", in: sub)
-        let c = try lib.addClip(to: o, start: 1, end: 4)
-        try lib.moveClip(c, to: other)
+        let shared = try lib.filedRecording("Thursday.mov")
+        let inSub = try lib.filedClip("In sub", in: sub, on: shared)
+        let elsewhere = try lib.filedClip("Elsewhere", in: other, on: shared)
+        _ = try lib.filedClip("Alone", in: turns, on: try lib.filedRecording("Saturday.mov"))
         try lib.deleteFolder(turns, mode: .deleteContents)
         #expect(try ctx.fetchCount(FetchDescriptor<Folder>()) == 1)
-        #expect(try ctx.fetchCount(FetchDescriptor<Original>()) == 0)
-        #expect(try ctx.fetchCount(FetchDescriptor<Clip>()) == 0)
-        #expect(removed == ["Thursday.mov"])
+        #expect(try ctx.fetch(FetchDescriptor<Clip>()).map(\.id) == [elsewhere.id])
+        #expect(inSub.isDeleted || inSub.modelContext == nil)
+        #expect(removed == ["Saturday.mov"], "Thursday.mov is still used by the clip in Other")
     }
 
-    @Test func deleteContentsKeepsLooseClipsFromOutside() throws {
+    @Test func deleteContentsKeepsClipsOnlyLinkedThere() throws {
         let turns = try lib.createFolder(named: "Turns", in: nil)
-        let outside = try original("Saturday")
-        let loose = try lib.addClip(to: outside, start: 0, end: 2)
-        try lib.moveClip(loose, to: turns)
+        let home = try lib.createFolder(named: "Home", in: nil)
+        let clip = try lib.filedClip(in: home)
+        try lib.setLinks(clip, to: [turns])
         try lib.deleteFolder(turns, mode: .deleteContents)
-        // The loose bookmark is deleted, its original survives.
-        #expect(try ctx.fetchCount(FetchDescriptor<Clip>()) == 0)
-        #expect(try ctx.fetchCount(FetchDescriptor<Original>()) == 1)
-        #expect(removed.isEmpty)
-    }
-
-    @Test func moveContentsUpToRoot() throws {
-        let turns = try lib.createFolder(named: "Turns", in: nil)
-        let sub = try lib.createFolder(named: "Sub", in: turns)
-        let o = try original("Thursday", in: turns)
-        let elsewhere = try original("Saturday", in: nil)
-        let loose = try lib.addClip(to: elsewhere, start: 0, end: 2)
-        try lib.moveClip(loose, to: turns)
-        try lib.deleteFolder(turns, mode: .moveContentsUp)
-        #expect(sub.parent == nil)
-        #expect(o.folder == nil)
-        #expect(loose.folder == nil)
+        #expect(try ctx.fetchCount(FetchDescriptor<Clip>()) == 1)
+        #expect(clip.linkedFolders.isEmpty)
         #expect(removed.isEmpty)
     }
 
     @Test func moveContentsUpToParent() throws {
         let home = try lib.createFolder(named: "Home2", in: nil)
         let turns = try lib.createFolder(named: "Turns", in: home)
-        let o = try original("Thursday", in: turns)
+        let sub = try lib.createFolder(named: "Sub", in: turns)
+        let clip = try lib.filedClip(in: turns)
         try lib.deleteFolder(turns, mode: .moveContentsUp)
-        #expect(o.folder?.id == home.id)
-    }
-
-    // MARK: Originals
-
-    @Test func deleteOriginalRemovesClipsAndFile() throws {
-        let other = try lib.createFolder(named: "Other", in: nil)
-        let o = try original()
-        let c = try lib.addClip(to: o, start: 0, end: 1)
-        try lib.moveClip(c, to: other)
-        try lib.deleteOriginal(o)
-        #expect(try ctx.fetchCount(FetchDescriptor<Clip>()) == 0)
-        #expect(other.looseClips.isEmpty)
-        #expect(removed == ["Class.mov"])
-    }
-
-    @Test func normalisesClipWhenOriginalJoinsItsFolder() throws {
-        let turns = try lib.createFolder(named: "Turns", in: nil)
-        let o = try original()
-        let c = try lib.addClip(to: o, start: 0, end: 1)
-        try lib.moveClip(c, to: turns)
-        #expect(c.isFiledElsewhere)
-        try lib.moveOriginal(o, to: turns)
-        #expect(c.folder == nil)
-        #expect(!c.isFiledElsewhere)
+        #expect(clip.folder?.id == home.id)
+        #expect(sub.parent?.id == home.id)
+        #expect(removed.isEmpty)
     }
 
     // MARK: Clips
 
-    @Test func clipNamesAreMonotonic() throws {
-        let o = try original()
-        let c1 = try lib.addClip(to: o, start: 0, end: 1)
-        let c2 = try lib.addClip(to: o, start: 2, end: 3)
-        try lib.deleteClip(c2)
-        let c3 = try lib.addClip(to: o, start: 4, end: 5)
-        #expect([c1.name, c3.name] == ["Clip 1", "Clip 3"])
-        #expect(c3.sortIndex > c1.sortIndex)
-    }
-
-    @Test func addClipNormalisesRange() throws {
-        let o = try original(duration: 10)
-        let c = try lib.addClip(to: o, start: 9.9, end: 9.8)
-        #expect(c.start == 9.5 && c.end == 10)
-    }
-
-    @Test func moveClipBackToItsVideo() throws {
+    @Test func clipsSortInTheOrderTheyWereMade() throws {
         let turns = try lib.createFolder(named: "Turns", in: nil)
-        let o = try original()
-        let c = try lib.addClip(to: o, start: 0, end: 1)
-        try lib.moveClip(c, to: turns)
-        try lib.moveClip(c, to: nil)
-        #expect(c.folder == nil)
-        try lib.moveClip(c, to: turns)
-        try lib.moveOriginal(o, to: nil)
-        try lib.moveClip(c, to: nil)
-        #expect(c.folder == nil)
+        let r = try lib.filedRecording()
+        let a = try lib.filedClip("A", in: turns, on: r)
+        let b = try lib.filedClip("B", in: turns, on: r)
+        #expect(b.sortIndex > a.sortIndex)
+    }
+
+    @Test func updateRangeStaysInsideTheRecording() throws {
+        let turns = try lib.createFolder(named: "Turns", in: nil)
+        let clip = try lib.filedClip(in: turns, on: try lib.filedRecording(duration: 10))
+        try lib.updateRange(clip, start: 8, end: 30)
+        #expect(clip.start == 8 && clip.end == 10)
+    }
+
+    @Test func moveClipBetweenFolders() throws {
+        let turns = try lib.createFolder(named: "Turns", in: nil)
+        let spins = try lib.createFolder(named: "Spins", in: nil)
+        let clip = try lib.filedClip(in: turns)
+        try lib.moveClip(clip, to: spins)
+        #expect(clip.folder?.id == spins.id)
+        #expect(turns.clips.isEmpty)
     }
 
     @Test func infoTrimsAndCapsNote() throws {
-        let c = try lib.addClip(to: try original(), start: 0, end: 1)
-        try lib.updateInfo(c, name: "  ", note: String(repeating: "a", count: LibraryService.noteLimit + 60))
-        #expect(c.name == "Clip 1")
-        #expect(c.note?.count == LibraryService.noteLimit)
-        try lib.updateInfo(c, name: "Hammerlock", note: "   ")
-        #expect(c.name == "Hammerlock")
-        #expect(c.note == nil)
+        let clip = try lib.filedClip("Clip 1", in: try lib.createFolder(named: "Turns", in: nil))
+        try lib.updateInfo(clip, name: "  ", note: String(repeating: "a", count: LibraryService.noteLimit + 60))
+        #expect(clip.name == "Clip 1")
+        #expect(clip.note?.count == LibraryService.noteLimit)
+        try lib.updateInfo(clip, name: "Hammerlock", note: "   ")
+        #expect(clip.name == "Hammerlock")
+        #expect(clip.note == nil)
     }
 
     @Test func togglesAndPlayed() throws {
-        let c = try lib.addClip(to: try original(), start: 0, end: 1)
-        try lib.toggleFavorite(c)
-        try lib.toggleLearned(c)
-        #expect(c.isFavorite && c.isLearned)
+        let clip = try lib.filedClip(in: try lib.createFolder(named: "Turns", in: nil))
+        try lib.toggleFavorite(clip)
+        try lib.toggleLearned(clip)
+        #expect(clip.isFavorite && clip.isLearned)
         let now = Date(timeIntervalSince1970: 100)
-        try lib.markPlayed(c, at: now)
-        #expect(c.lastPlayedAt == now)
+        try lib.markPlayed(clip, at: now)
+        #expect(clip.lastPlayedAt == now)
     }
 
     @Test func normalizedClampsToTinyDuration() {

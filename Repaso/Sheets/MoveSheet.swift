@@ -2,35 +2,20 @@ import SwiftUI
 import SwiftData
 import RepasoCore
 
+/// What Move is for: a folder (clips use Folders…).
 enum MoveSubject: Identifiable {
-    case clip(Clip)
-    case original(Original)
     case folder(Folder)
 
     var id: UUID {
         switch self {
-        case .clip(let c): c.id
-        case .original(let o): o.id
         case .folder(let f): f.id
         }
     }
 
-    var title: String {
-        switch self {
-        case .clip: "Move clip"
-        case .original: "Move video"
-        case .folder: "Move folder"
-        }
-    }
+    var title: String { "Move folder" }
 
-    /// Label for the top row (no folder).
-    var rootLabel: String {
-        switch self {
-        case .clip: "With its video"
-        case .original: "Unsorted"
-        case .folder: "Home"
-        }
-    }
+    /// Label for the top row (no parent).
+    var rootLabel: String { "Home" }
 
     /// A new folder may go inside `folder` (a folder can't be created inside the one being moved).
     func canContain(_ folder: Folder?) -> Bool {
@@ -41,8 +26,6 @@ enum MoveSubject: Identifiable {
 
     var currentFolder: Folder? {
         switch self {
-        case .clip(let c): c.folder
-        case .original(let o): o.folder
         case .folder(let f): f.parent
         }
     }
@@ -230,8 +213,6 @@ struct MoveSheet: View {
 
     private static func apply(_ subject: MoveSubject, _ lib: LibraryService, to folder: Folder?) throws {
         switch subject {
-        case .clip(let c): try lib.moveClip(c, to: folder)
-        case .original(let o): try lib.moveOriginal(o, to: folder)
         case .folder(let f): try lib.moveFolder(f, to: folder)
         }
     }
@@ -245,11 +226,6 @@ struct MoveSheet: View {
             Text("Moved to \(name)")
                 .font(.system(size: 22, weight: .bold))
                 .foregroundStyle(Theme.textPrimary)
-            if case .clip = subject {
-                Text("Still listed under its video.")
-                    .font(.system(size: 15))
-                    .foregroundStyle(Theme.textSecondary)
-            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }

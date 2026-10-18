@@ -5,7 +5,6 @@ import RepasoCore
 /// Actions a clip row can ask its screen to present.
 struct ClipActions {
     var play: (Clip) -> Void
-    var move: (Clip) -> Void
     var info: (Clip) -> Void
     var delete: (Clip) -> Void
     var share: (Clip) -> Void
@@ -17,8 +16,6 @@ struct ClipActions {
     var folderName: String?
     /// Opens the cutter on the clip's video with the clip selected, to trim it.
     var trim: (Clip) -> Void = { _ in }
-    /// Plays the clip's whole video (not offered for a clip whose full video was deleted).
-    var playFull: (Clip) -> Void = { _ in }
     /// Turns on Arrange mode, where clips can be dragged onto folders; nil where there's nothing to drag to.
     var arrange: (() -> Void)?
 }
@@ -34,9 +31,6 @@ struct ClipMenuItems: View {
     var body: some View {
         Button("Name & note…", systemImage: "pencil") { actions.info(clip) }
         Button("Trim…", systemImage: "timeline.selection") { actions.trim(clip) }
-        if clip.original?.isClipSource == false {
-            Button("Play full video", systemImage: "film") { actions.playFull(clip) }
-        }
         Divider()
         Button("Folders…", systemImage: "folder") { actions.link(clip) }
         if linkedHome != nil, let unlink = actions.unlink {
@@ -57,19 +51,14 @@ struct ClipMenuItems: View {
     }
 }
 
-/// Clip row: poster, name (up to two lines), duration, location tag and small favorite/learned marks.
+/// Clip row: poster, name (up to two lines), duration, where it lives, and small favorite/learned marks.
 /// Tapping anywhere plays; favorite, learned and everything else live in the long-press menu and the Player.
 struct ClipRow: View {
-    enum Context { case underOriginal, loose }
-
     let clip: Clip
-    let context: Context
     let actions: ClipActions
     /// Folder screens let clips be dragged onto subfolders; `dragOrigin` is that screen's folder.
     var isDraggable = false
     var dragOrigin: UUID?
-    /// Set for the first rows under a video, so their posters fly out of its deck.
-    var deckNamespace: Namespace.ID?
     /// Set when the clip shows in this folder through a link: the name of its home.
     var linkedHome: String?
     @Environment(AppEnvironment.self) private var env
@@ -81,7 +70,6 @@ struct ClipRow: View {
             HStack(spacing: 10) {
                 PosterView(request: clip.thumbnailRequest, cornerRadius: 10, live: clip.previewSource)
                     .frame(width: 64, height: 44)
-                    .modifier(DeckMatch(id: clip.id, namespace: deckNamespace))
                 VStack(alignment: .leading, spacing: 3) {
                     Text(clip.name)
                         .font(.system(size: 15, weight: .semibold))
@@ -125,27 +113,13 @@ struct ClipRow: View {
                 .font(Theme.mono(12))
                 .foregroundStyle(Theme.textSecondary)
                 .fixedSize()   // never wrap the timecode; the tag truncates instead
-            switch context {
-            case .underOriginal:
-                if clip.isFiledElsewhere, let folder = clip.folder {
-                    Text("In \(folder.name)")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(Theme.accent)
-                        .padding(.horizontal, 7)
-                        .padding(.vertical, 2)
-                        .background(Theme.accentTint, in: Capsule())
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.85)
-                }
-            case .loose:
-                if let linkedHome {
-                    LinkBadge(home: linkedHome)
-                } else if let title = clip.original?.title {
-                    Text("from \(title)")
-                        .font(.system(size: 12))
-                        .foregroundStyle(Theme.textSecondary)
-                        .lineLimit(1)
-                }
+            if let linkedHome {
+                LinkBadge(home: linkedHome)
+            } else if let folder = clip.folder {
+                Text("in \(folder.name)")
+                    .font(.system(size: 12))
+                    .foregroundStyle(Theme.textSecondary)
+                    .lineLimit(1)
             }
         }
     }
@@ -186,20 +160,6 @@ struct ClipDragSource: ViewModifier {
             content.dragSource(DragRef(kind: .clip, id: clip.id), drag: drag, origin: origin) {
                 ClipLiftPreview(name: clip.name, length: clip.length, reduceMotion: reduceMotion)
             }
-        } else {
-            content
-        }
-    }
-}
-
-/// Pairs a row poster with its card in the video's deck (matched geometry), when there is one.
-private struct DeckMatch: ViewModifier {
-    let id: UUID
-    let namespace: Namespace.ID?
-
-    func body(content: Content) -> some View {
-        if let namespace {
-            content.matchedGeometryEffect(id: id, in: namespace)
         } else {
             content
         }

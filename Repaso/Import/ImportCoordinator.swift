@@ -3,8 +3,9 @@ import PhotosUI
 import SwiftData
 import RepasoCore
 
-/// Copies picked videos into the library one at a time, so progress is honest and the disk isn't thrashed.
-/// Lives for the whole app session, so hiding the import sheet doesn't stop the import.
+/// Copies picked videos into the library one at a time, in pick order, so progress is honest and the disk isn't
+/// thrashed. Each finished copy becomes a pending recording that the import guide walks through. Lives for the whole
+/// app session, so closing the guide (Continue later) doesn't stop the copying.
 @Observable @MainActor
 final class ImportCoordinator {
     struct Item: Identifiable {
@@ -17,87 +18,32 @@ final class ImportCoordinator {
 
         let id = UUID()
         let pick: PhotosPickerItem
-        /// Where this video goes; per item, so a second import into another folder can't redirect the first.
-        let target: Folder?
-        var name: String
         var state: State = .waiting
         var poster: ThumbnailRequest?
-        var duration: Double?
-        var size: Int64?
         /// Photos asset id, for the delete-from-Photos offer (needs the picker's `photoLibrary: .shared()`).
         var assetID: String?
-        var originalID: UUID?
-        var recordedAt: Date?
-        /// This video's own name and tags; empty means "same as the batch" (tags) or "keep the date title" (name).
-        var ownTitle = ""
-        var ownInstructors = ""
-        var ownEvent = ""
-
-        var hasOwnDetails: Bool {
-            ![ownTitle, ownInstructors, ownEvent].allSatisfy { $0.trimmingCharacters(in: .whitespaces).isEmpty }
-        }
+        var recordingID: UUID?
     }
 
     private(set) var items: [Item] = []
     private var runner: Task<Void, Never>?
 
-    /// Tag fields for the current batch; saved on every original it imports that has no value of its own.
-    var instructorsText = ""
-    var eventText = ""
-    /// Outcome line of the delete-from-Photos offer; nil until the user answers it.
-    private(set) var photosResult: String?
-    private(set) var isDeletingFromPhotos = false
-
     var isRunning: Bool { runner != nil }
 
-    var recordedLine: String? { ImportSummary.recordedLine(items.compactMap(\.recordedAt)) }
-
-    /// Only videos that made it into the library may leave Photos.
-    private var deletableAssetIDs: [String] {
-        items.filter { $0.state == .done }.compactMap(\.assetID)
-    }
-
-    /// How many videos to offer deleting from Photos, once the batch has finished.
-    var photosPromptCount: Int? {
-        guard !isRunning, photosResult == nil,
-              !items.contains(where: { $0.state == .waiting || $0.state.isCopying }) else { return nil }
-        let count = deletableAssetIDs.count
-        return count > 0 ? count : nil
-    }
-
-    var overallProgress: Double {
-        guard !items.isEmpty else { return 0 }
-        let sum = items.reduce(0.0) { acc, item in
-            switch item.state {
-            case .done, .failed: acc + 1
-            case .copying(let p): acc + p
-            case .waiting: acc
-            }
-        }
-        return sum / Double(items.count)
-    }
-
-    func start(_ picks: [PhotosPickerItem], into folder: Folder?, context: ModelContext, env: AppEnvironment) {
-        guard !picks.isEmpty else { return }
-        if !isRunning {
-            items.removeAll()
-            instructorsText = ""
-            eventText = ""
-            photosResult = nil
-        }
-        let offset = items.count
-        items += picks.enumerated().map {
-            Item(pick: $1, target: folder, name: "Video \(offset + $0 + 1)", assetID: $1.itemIdentifier)
-        }
+    /// Starts copying `picks` and returns their item ids, in pick order, for the guide's queue.
+    @discardableResult
+    func start(_ picks: [PhotosPickerItem], context: ModelContext, env: AppEnvironment) -> [Item.ID] {
+        guard !picks.isEmpty else { return [] }
+        if !isRunning { items.removeAll { $0.state == .done || $0.state.isFailed } }
+        let new = picks.map { Item(pick: $0, assetID: $0.itemIdentifier) }
+        items += new
         run(context: context, env: env)
+        return new.map(\.id)
     }
 
-    /// Edits one video's own name or tags (the import sheet's per-video fields).
-    func update(_ id: UUID, _ change: (inout Item) -> Void) {
-        if let i = items.firstIndex(where: { $0.id == id }) { change(&items[i]) }
-    }
+    func item(_ id: Item.ID) -> Item? { items.first { $0.id == id } }
 
-    func retry(_ id: UUID, context: ModelContext, env: AppEnvironment) {
+    func retry(_ id: Item.ID, context: ModelContext, env: AppEnvironment) {
         guard let i = items.firstIndex(where: { $0.id == id }) else { return }
         items[i].state = .waiting
         run(context: context, env: env)
@@ -110,16 +56,13 @@ final class ImportCoordinator {
                 await self.process(at: i, context: context, env: env)
             }
             self?.runner = nil
-            self?.announce(env: env)
         }
     }
 
     private func process(at index: Int, context: ModelContext, env: AppEnvironment) async {
         let id = items[index].id
         let pick = items[index].pick
-        let item = items[index]
-        // A folder deleted mid-import sends its videos to Unsorted instead.
-        let target = items[index].target.flatMap { $0.isDeleted || $0.modelContext == nil ? nil : $0 }
+        let assetID = items[index].assetID
         func update(_ change: (inout Item) -> Void) {
             if let j = items.firstIndex(where: { $0.id == id }) { change(&items[j]) }
         }
@@ -132,101 +75,21 @@ final class ImportCoordinator {
             update { $0.state = .copying(0.7) }
             let meta = try await VideoMetadata.load(transfer.url)
             let fileName = try env.videos.adopt(fileAt: transfer.url)
-            let current = items.first { $0.id == id } ?? item   // its own fields may have been typed meanwhile
-            let ownTitle = current.ownTitle.trimmingCharacters(in: .whitespacesAndNewlines)
-            let original = try env.library(context).addOriginal(
-                title: ownTitle.isEmpty ? Self.title(recordedAt: meta.recordedAt, fallback: "Imported video") : ownTitle,
-                fileName: fileName, duration: meta.duration, recordedAt: meta.recordedAt, to: target,
-                instructors: TagText.instructors(from: TagText.resolved(current.ownInstructors, shared: instructorsText)),
-                event: TagText.resolved(current.ownEvent, shared: eventText))
+            let recording = try env.library(context).addRecording(fileName: fileName, duration: meta.duration,
+                                                                  recordedAt: meta.recordedAt, photosAssetID: assetID)
             update {
-                $0.originalID = original.id
-                $0.recordedAt = meta.recordedAt
-                $0.name = original.title
-                $0.duration = meta.duration
-                $0.size = env.videos.fileSize(fileName)
-                $0.poster = original.thumbnailRequest
+                $0.recordingID = recording.id
+                $0.poster = recording.thumbnailRequest
                 $0.state = .done
             }
-            _ = await env.thumbnails.image(for: original.thumbnailRequest)
+            _ = await env.thumbnails.image(for: recording.thumbnailRequest)
         } catch {
             update { $0.state = .failed(Self.message(for: error)) }
         }
     }
 
-    /// Where this batch is going, for the sheet title: "Unsorted" or the folder's name.
-    var destinationName: String {
-        Self.name(of: items.last?.target)
-    }
-
-    private static func name(of folder: Folder?) -> String {
-        guard let folder, !folder.isDeleted, folder.modelContext != nil else { return "Unsorted" }
-        return folder.name
-    }
-
-    /// Navigation path to where the finished batch landed; nil if videos went to different places.
-    var finishedRoute: [Route]? {
-        let done = items.filter { $0.state == .done }
-        guard !done.isEmpty, Set(done.map { $0.target?.id }).count == 1 else { return nil }
-        let folder = done[0].target.flatMap { $0.isDeleted || $0.modelContext == nil ? nil : $0 }
-        return folder.map { f in (f.ancestors + [f]).map { .folder($0.id) } } ?? [.unsorted]
-    }
-
-    /// "2 videos added to Turns", with Open to go there.
-    private func announce(env: AppEnvironment) {
-        let done = items.filter { $0.state == .done }
-        guard !done.isEmpty else { return }
-        let count = done.count == 1 ? "1 video" : "\(done.count) videos"
-        guard let route = finishedRoute else {
-            env.showToast("\(count) imported", seconds: 3.8)
-            return
-        }
-        env.showToast("\(count) added to \(destinationName)", actionTitle: "Open", undo: {
-            env.pendingRoute = route
-        }, seconds: 5)
-    }
-
-    /// Saves names and tags on every original this batch has imported so far: each video's own values where it
-    /// has them, the batch's otherwise.
-    func applyTags(context: ModelContext, env: AppEnvironment) {
-        let imported = items.filter { $0.originalID != nil }
-        guard !imported.isEmpty else { return }
-        let ids = Set(imported.compactMap(\.originalID))
-        let originals = ((try? context.fetch(FetchDescriptor<Original>())) ?? []).filter { ids.contains($0.id) }
-        let byID = Dictionary(originals.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-        let lib = env.library(context)
-        env.perform {
-            for item in imported {
-                guard let id = item.originalID, let original = byID[id] else { continue }
-                try lib.setTags([original],
-                                instructors: TagText.instructors(from: TagText.resolved(item.ownInstructors, shared: instructorsText)),
-                                event: TagText.resolved(item.ownEvent, shared: eventText))
-                if !item.ownTitle.trimmingCharacters(in: .whitespaces).isEmpty {
-                    try lib.renameOriginal(original, to: item.ownTitle)
-                }
-            }
-        }
-        for item in imported where !item.ownTitle.trimmingCharacters(in: .whitespaces).isEmpty {
-            update(item.id) { $0.name = $0.ownTitle.trimmingCharacters(in: .whitespaces) }
-        }
-    }
-
-    func keepInPhotos() { photosResult = PhotosCleanupText.kept }
-
-    func deleteFromPhotos() async {
-        guard !isDeletingFromPhotos else { return }
-        isDeletingFromPhotos = true
-        defer { isDeletingFromPhotos = false }
-        switch await PhotosCleaner.delete(deletableAssetIDs) {
-        case .removed: photosResult = PhotosCleanupText.removed
-        case .kept: photosResult = PhotosCleanupText.kept
-        case .needsAccess: photosResult = PhotosCleanupText.needsAccess
-        case .failed: photosResult = PhotosCleanupText.failed
-        }
-    }
-
-    /// Photos hands over temp file names, so titles come from the recording date.
-    static func title(recordedAt: Date?, fallback: String) -> String {
+    /// Photos hands over temp file names, so titles come from the recording date: "Thursday, Oct 16 class".
+    static func title(recordedAt: Date?, fallback: String = "Imported video") -> String {
         guard let recordedAt else { return fallback }
         return recordedAt.formatted(.dateTime.weekday(.wide).month(.abbreviated).day()) + " class"
     }
@@ -242,6 +105,11 @@ final class ImportCoordinator {
 extension ImportCoordinator.Item.State {
     var isCopying: Bool {
         if case .copying = self { return true }
+        return false
+    }
+
+    var isFailed: Bool {
+        if case .failed = self { return true }
         return false
     }
 }

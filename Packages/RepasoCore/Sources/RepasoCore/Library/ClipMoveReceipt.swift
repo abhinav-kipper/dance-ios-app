@@ -2,7 +2,7 @@
 @MainActor
 public struct ClipMoveReceipt {
     public let clip: Clip
-    /// nil = the clip lived with its video.
+    /// nil only for a clip that had no folder yet.
     public let previousFolder: Folder?
     public let destination: Folder
 }

@@ -53,7 +53,7 @@ final class PlayerActionsTests: XCTestCase {
         // More menu: delete closes the Player and removes the clip
         more.tap()
         app.buttons["Delete clip"].tap()
-        let confirm = app.buttons.matching(NSPredicate(format: "label == %@", "Delete clip")).firstMatch
+        let confirm = app.buttons.matching(NSPredicate(format: "label == %@", "Delete “Double turn prep”")).firstMatch
         XCTAssertTrue(confirm.waitForExistence(timeout: 3))
         confirm.tap()
         XCTAssertTrue(app.buttons["Close player"].waitForNonExistence(timeout: 4), "deleting closes the Player")

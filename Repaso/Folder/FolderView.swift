@@ -3,10 +3,9 @@ import SwiftData
 import PhotosUI
 import RepasoCore
 
-/// A folder (or Unsorted when `folderID == nil`): subfolders, videos still to cut, and its clips as preview cards.
-/// A video with clips is archived (Full videos on Home); its clips live here.
+/// A folder: its subfolders, then its clips as preview cards.
 struct FolderView: View {
-    let folderID: UUID?
+    let folderID: UUID
     @Binding var path: [Route]
 
     @Environment(\.modelContext) private var ctx
@@ -14,7 +13,6 @@ struct FolderView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Query private var matches: [Folder]
-    @Query(filter: #Predicate<Original> { $0.folder == nil }) private var unsortedOriginals: [Original]
     @AppStorage private var sortRaw: String
     @AppStorage private var hideLearned: Bool
 
@@ -26,7 +24,6 @@ struct FolderView: View {
     @State private var deletingClip: Clip?
     @State private var picks: [PhotosPickerItem] = []
     @State private var showPicker = false
-    @State private var showImport = false
     @State private var editingFolderID: UUID?
     @State private var hoveredFolderID: UUID?
     @State private var springTask: Task<Void, Never>?
@@ -34,29 +31,22 @@ struct FolderView: View {
     @State private var dropSuccess = 0
     @State private var springLoads = 0
 
-    init(folderID: UUID?, path: Binding<[Route]>) {
+    init(folderID: UUID, path: Binding<[Route]>) {
         self.folderID = folderID
         _path = path
-        let id = folderID ?? UUID()
+        let id = folderID
         _matches = Query(filter: #Predicate<Folder> { $0.id == id })
-        let key = folderID?.uuidString ?? "unsorted"
+        let key = folderID.uuidString
         _sortRaw = AppStorage(wrappedValue: ClipSort.manual.rawValue, "sort.\(key)")
         _hideLearned = AppStorage(wrappedValue: false, "hideLearned.\(key)")
     }
 
     private var folder: Folder? { matches.first }
     private var sort: ClipSort { ClipSort(rawValue: sortRaw) ?? .manual }
-    private var title: String { folder?.name ?? "Unsorted" }
-
-    /// Videos here with no clips yet.
-    private var toCut: [Original] {
-        if let folder { return FolderContents.videosToCut(in: folder, sort: sort) }
-        return FolderContents.unsortedVideosToCut(unsortedOriginals, sort: sort)
-    }
+    private var title: String { folder?.name ?? "" }
 
     private var clips: [Clip] {
-        if let folder { return FolderContents.folderClips(in: folder, sort: sort, hideLearned: hideLearned) }
-        return FolderContents.unsortedClips(of: unsortedOriginals, sort: sort, hideLearned: hideLearned)
+        folder.map { FolderContents.folderClips(in: $0, sort: sort, hideLearned: hideLearned) } ?? []
     }
 
     private var subfolders: [Folder] {
@@ -67,8 +57,7 @@ struct FolderView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
                 header
-                if folder != nil { subfolderSection }
-                toCutSection
+                subfolderSection
                 if !clips.isEmpty { chips }   // they act on the clips, so they sit right above them
                 clipsSection
             }
@@ -103,25 +92,17 @@ struct FolderView: View {
                          preferredItemEncoding: .current, photoLibrary: .shared())
         .onChange(of: picks) { _, new in
             guard !new.isEmpty else { return }
-            env.importer.start(new, into: folder, context: ctx, env: env)
+            env.startImport(new, from: folder, context: ctx)
             picks = []
-            showImport = true
         }
         .onChange(of: clips.isEmpty) { _, empty in if empty { arranging = false } }
         .onChange(of: matches.isEmpty) { _, gone in
-            if gone && folderID != nil { dismiss() }   // folder deleted while open
+            if gone { dismiss() }   // folder deleted while open
         }
-        .sheet(isPresented: $showImport) { ImportSheet() }
         .sheet(item: $sheet) { $0.content }
         .fullScreenCover(item: $player) { PlayerView(request: $0) }
-        .fullScreenCover(item: $cutting) { CutView(original: $0.original, focusClipID: $0.focusClipID) }
-        .confirmationDialog("Delete this clip?", isPresented: deleteClipBinding, titleVisibility: .visible, presenting: deletingClip) { clip in
-            Button("Delete “\(clip.name)”", role: .destructive) {
-                env.perform { try env.library(ctx).deleteClip(clip) }
-            }
-        } message: { _ in
-            Text("The video stays in your library.")
-        }
+        .fullScreenCover(item: $cutting) { CutView(recording: $0.recording, focusClipID: $0.focusClipID) }
+        .clipDeleteDialog($deletingClip)
         .toastHost(env)
     }
 
@@ -245,31 +226,6 @@ struct FolderView: View {
     }
 
     @ViewBuilder
-    private var toCutSection: some View {
-        if !toCut.isEmpty {
-            VStack(alignment: .leading, spacing: 12) {
-                Text("To cut").sectionLabelStyle()
-                ForEach(Array(toCut.enumerated()), id: \.element.id) { i, original in
-                    OriginalCard(
-                        original: original,
-                        clips: [],
-                        actions: clipActions,
-                        onPlay: { playOriginal(original) },
-                        onCut: { cutting = CutRequest(original: original) },
-                        onMove: { sheet = .move(.original(original)) },
-                        onDelete: { sheet = .deleteOriginal(original) },
-                        onLink: { sheet = .link(.original(original)) },
-                        onEdit: { sheet = .videoInfo(original) },
-                        linkedHome: linkedHome(of: original),
-                        onUnlink: { unlink(original) },
-                        folderName: folder?.name)
-                    .riseIn(i)
-                }
-            }
-        }
-    }
-
-    @ViewBuilder
     private var clipsSection: some View {
         if !clips.isEmpty {
             VStack(alignment: .leading, spacing: 12) {
@@ -293,9 +249,8 @@ struct FolderView: View {
                 }
                 .animation(Theme.spring, value: clips.map(\.id))
             }
-        } else if toCut.isEmpty && (folder == nil || subfolders.isEmpty) {
-            Text(folder == nil ? "Nothing new. Imported videos wait here until you cut them."
-                 : "No clips here yet. Tap Import, or move clips here.")
+        } else if subfolders.isEmpty {
+            Text("No clips here yet. Tap Import, or move clips here.")
                 .font(.system(size: 15))
                 .foregroundStyle(Theme.textSecondary)
                 .padding(.top, 8)
@@ -311,45 +266,25 @@ struct FolderView: View {
                 let all = queue.contains { $0.id == clip.id } ? queue : [clip] + queue
                 player = PlayerRequest(queue: all, index: all.firstIndex { $0.id == clip.id } ?? 0, title: title)
             },
-            move: { sheet = .move(.clip($0)) },
             info: { sheet = .info($0) },
             delete: { deletingClip = $0 },
             share: { sheet = .share($0) },
-            link: { sheet = .link(.clip($0)) },
-            unlink: folder == nil ? nil : { unlink($0) },
+            link: { sheet = .link($0) },
+            unlink: { unlink($0) },
             folderName: folder?.name,
             trim: { clip in
-                guard let original = clip.original else { return }
-                cutting = CutRequest(original: original, focusClipID: clip.id)
-            },
-            playFull: { clip in
-                guard let original = clip.original else { return }
-                player = PlayerRequest(items: [.original(original)], index: 0, title: original.title)
+                guard let recording = clip.recording else { return }
+                cutting = CutRequest(recording: recording, focusClipID: clip.id)
             },
             arrange: subfolders.isEmpty ? nil : { withAnimation(Theme.spring) { arranging = true } })
     }
 
     // MARK: Links
 
-    /// Home folder name when `original` shows here only through a link.
-    private func linkedHome(of original: Original) -> String? {
-        guard let folder, FolderContents.isLinked(original, in: folder) else { return nil }
-        return original.folder?.name ?? "Unsorted"
-    }
-
+    /// Home folder name when `clip` shows here only through a link.
     private func linkedHome(of clip: Clip) -> String? {
-        guard let folder, FolderContents.showsThroughLink(clip, in: folder) else { return nil }
-        return clip.effectiveFolder?.name ?? "Unsorted"
-    }
-
-    private func unlink(_ original: Original) {
-        guard let folder else { return }
-        let lib = env.library(ctx)
-        env.perform { try withAnimation(Theme.spring) { try lib.unlink(original, from: folder) } }
-        let env = env
-        env.showToast("Removed from \(folder.name)") {
-            env.perform { try lib.setLinks(original, to: original.linkedFolders + [folder]) }
-        }
+        guard let folder, FolderContents.isLinked(clip, in: folder) else { return nil }
+        return clip.folder?.name
     }
 
     private func unlink(_ clip: Clip) {
@@ -360,16 +295,6 @@ struct FolderView: View {
         env.showToast("Removed from \(folder.name)") {
             env.perform { try lib.setLinks(clip, to: clip.linkedFolders + [folder]) }
         }
-    }
-
-    /// Plays the whole video; swiping moves between this folder's videos.
-    private func playOriginal(_ original: Original) {
-        let items = toCut.map(PlaybackItem.original)
-        player = PlayerRequest(items: items, index: toCut.firstIndex { $0.id == original.id } ?? 0, title: title)
-    }
-
-        private var deleteClipBinding: Binding<Bool> {
-        Binding(get: { deletingClip != nil }, set: { if !$0 { deletingClip = nil } })
     }
 
     private func newSubfolder() {
@@ -450,7 +375,7 @@ struct FolderView: View {
     }
 
     private func requestDelete(_ sub: Folder) {
-        if sub.children.isEmpty && sub.originals.isEmpty && sub.looseClips.isEmpty {
+        if sub.children.isEmpty && sub.clips.isEmpty {
             env.perform { try env.library(ctx).deleteFolder(sub, mode: .deleteContents) }
         } else {
             sheet = .deleteFolder(sub)
@@ -471,7 +396,7 @@ struct FavoritesView: View {
     @State private var cutting: CutRequest?
 
     private var clips: [Clip] {
-        FolderContents.sortClips(favorites.filter { $0.original != nil }, by: ClipSort(rawValue: sortRaw) ?? .manual)
+        FolderContents.sortClips(favorites.filter(\.isFiled), by: ClipSort(rawValue: sortRaw) ?? .manual)
     }
 
     var body: some View {
@@ -522,13 +447,8 @@ struct FavoritesView: View {
         .toolbar(.hidden, for: .navigationBar)
         .sheet(item: $sheet) { $0.content }
         .fullScreenCover(item: $player) { PlayerView(request: $0) }
-        .fullScreenCover(item: $cutting) { CutView(original: $0.original, focusClipID: $0.focusClipID) }
-        .confirmationDialog("Delete this clip?", isPresented: Binding(get: { deletingClip != nil }, set: { if !$0 { deletingClip = nil } }),
-                            titleVisibility: .visible, presenting: deletingClip) { clip in
-            Button("Delete “\(clip.name)”", role: .destructive) {
-                env.perform { try env.library(ctx).deleteClip(clip) }
-            }
-        }
+        .fullScreenCover(item: $cutting) { CutView(recording: $0.recording, focusClipID: $0.focusClipID) }
+        .clipDeleteDialog($deletingClip)
         .toastHost(env)
     }
 
@@ -537,18 +457,13 @@ struct FavoritesView: View {
             play: { clip in
                 player = PlayerRequest(queue: clips, index: clips.firstIndex { $0.id == clip.id } ?? 0, title: "Favorites")
             },
-            move: { sheet = .move(.clip($0)) },
             info: { sheet = .info($0) },
             delete: { deletingClip = $0 },
             share: { sheet = .share($0) },
-            link: { sheet = .link(.clip($0)) },
+            link: { sheet = .link($0) },
             trim: { clip in
-                guard let original = clip.original else { return }
-                cutting = CutRequest(original: original, focusClipID: clip.id)
-            },
-            playFull: { clip in
-                guard let original = clip.original else { return }
-                player = PlayerRequest(items: [.original(original)], index: 0, title: original.title)
+                guard let recording = clip.recording else { return }
+                cutting = CutRequest(recording: recording, focusClipID: clip.id)
             })
     }
 }

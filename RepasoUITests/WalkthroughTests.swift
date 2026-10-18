@@ -21,7 +21,6 @@ final class WalkthroughTests: XCTestCase {
         let wrap = button(beginningWith: "Wrap and unwrap")
         XCTAssertTrue(wrap.waitForExistence(timeout: 5))
         XCTAssertFalse(button(beginningWith: "Hammerlock exit").exists, "a clip filed in Hammerlock lives there, not here")
-        XCTAssertFalse(app.buttons["Cut clips from Thursday class"].exists, "a video with clips is archived, not listed")
         snap("02-folder")
 
         // Player
@@ -104,54 +103,6 @@ final class WalkthroughTests: XCTestCase {
         video.tap()   // stepping keeps the top bar away; playing brings it back
         XCTAssertTrue(close.waitForExistence(timeout: 3) && close.isHittable)
         close.tap()
-
-        // The full video, on demand from the clip's menu
-        wrap.press(forDuration: 1.0)
-        app.buttons["Play full video"].tap()
-        XCTAssertTrue(app.buttons["Close player"].waitForExistence(timeout: 5))
-        XCTAssertFalse(app.buttons["Add to favorites"].exists, "whole videos have no clip buttons (favorite, learned)")
-        snap("04e-player-whole-video")
-        app.closePlayer()
-
-        // Cut more from the Full videos page
-        app.buttons["Back to Home"].firstMatch.tap()
-        let videosTile = button(beginningWith: "Videos")
-        XCTAssertTrue(videosTile.waitForExistence(timeout: 5), "back on Home")
-        videosTile.tap()
-        let cut = app.buttons["Cut clips from Thursday class"]
-        XCTAssertTrue(cut.waitForExistence(timeout: 5))
-        snap("04f-full-videos")
-        cut.tap()
-        let markStart = app.buttons["Mark start"]
-        XCTAssertTrue(markStart.waitForExistence(timeout: 5))
-        snap("05-cut")
-        markStart.tap()
-        sleep(2)
-        snap("06-cut-recording")
-        button(beginningWith: "Mark end").tap()   // label also carries the live length
-        XCTAssertTrue(app.descendants(matching: .any)["Clip 4"].firstMatch.waitForExistence(timeout: 3), "new clip appears in the tray")
-        snap("07-cut-clip-added")
-        // Name it straight away from the toast
-        let nameButton = app.buttons["Name"].firstMatch   // the screen behind Cut hosts the same toast
-        XCTAssertTrue(nameButton.waitForExistence(timeout: 3), "the clip-added toast offers Name")
-        nameButton.tap()
-        let trayField = app.textFields["Clip name"]
-        XCTAssertTrue(trayField.waitForExistence(timeout: 3))
-        trayField.typeText("Basic step\n")
-        XCTAssertTrue(app.descendants(matching: .any)["Basic step"].firstMatch.waitForExistence(timeout: 3), "typing replaces the clip's name")
-        app.buttons["Done"].tap()
-        // A new clip was made, so Done asks about the full video
-        let keepFull = app.buttons["Keep full video"]
-        XCTAssertTrue(keepFull.waitForExistence(timeout: 3), "Done asks whether to keep the full video")
-        snap("07b-keep-full-video")
-        keepFull.tap()
-        XCTAssertTrue(markStart.waitForNonExistence(timeout: 3))
-
-        // The new clip lives in Turns with the others
-        app.buttons["Back to Home"].firstMatch.tap()
-        XCTAssertTrue(turns.waitForExistence(timeout: 5))
-        turns.tap()
-        XCTAssertTrue(button(beginningWith: "Basic step").waitForExistence(timeout: 5), "a clip lives where its video lives")
 
         // Arrange, then drag a clip onto a subfolder card, then Undo
         XCTAssertTrue(wrap.waitForExistence(timeout: 5))

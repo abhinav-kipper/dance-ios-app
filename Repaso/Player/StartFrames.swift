@@ -10,10 +10,10 @@ final class StartFrames {
     private var tasks: [String: Task<Void, Never>] = [:]
 
     /// Changes when the clip is trimmed, so a new start decodes a new frame.
-    static func key(_ item: PlaybackItem) -> String { "\(item.id)-\(item.range.lowerBound)" }
+    static func key(_ clip: Clip) -> String { "\(clip.id)-\(clip.range.lowerBound)" }
 
     /// Keeps frames for `items` only, decoding any that are missing.
-    func prefetch(_ items: [PlaybackItem], videos: VideoStore) {
+    func prefetch(_ items: [Clip], videos: VideoStore) {
         let keep = Set(items.map(Self.key))
         images = images.filter { keep.contains($0.key) }
         for (key, task) in tasks where !keep.contains(key) {
@@ -22,8 +22,8 @@ final class StartFrames {
         }
         for item in items {
             let key = Self.key(item)
-            guard images[key] == nil, tasks[key] == nil, let original = item.original else { continue }
-            let url = videos.url(for: original.fileName)
+            guard images[key] == nil, tasks[key] == nil, let recording = item.recording else { continue }
+            let url = videos.url(for: recording.fileName)
             let time = item.range.lowerBound
             tasks[key] = Task { [weak self] in
                 let image = await Self.decode(url: url, at: time)

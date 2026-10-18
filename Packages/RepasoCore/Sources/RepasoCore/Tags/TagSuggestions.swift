@@ -1,14 +1,15 @@
 import Foundation
 
-/// Autocomplete chips for the import sheet, drawn from earlier imports.
+/// Autocomplete chips for the name card, drawn from clips already made.
 @MainActor
 public enum TagSuggestions {
-    public static func instructors(for query: String, excluding: [String] = [], in originals: [Original], limit: Int = 3) -> [String] {
-        rank(originals.flatMap { o in o.instructors.map { ($0, o.importedAt) } }, query: query, excluding: excluding, limit: limit)
+    public static func instructors(for query: String, excluding: [String] = [], in clips: [Clip], limit: Int = 3) -> [String] {
+        rank(clips.flatMap { c in c.instructors.map { ($0, c.addedAt) } }, query: query, excluding: excluding, limit: limit)
     }
 
-    public static func events(for query: String, excluding: [String] = [], in originals: [Original], limit: Int = 3) -> [String] {
-        rank(originals.compactMap { o in o.event.map { ($0, o.importedAt) } }, query: query, excluding: excluding, limit: limit)
+    /// Clip names already used, for the name card.
+    public static func names(for query: String, in clips: [Clip], limit: Int = 3) -> [String] {
+        rank(clips.map { ($0.name, $0.addedAt) }, query: query, excluding: [], limit: limit)
     }
 
     /// Most used first, then most recent, then alphabetical. A query keeps prefix matches (whole value or any word)
@@ -22,6 +23,8 @@ public enum TagSuggestions {
             let key = value.lowercased()
             if var stat = stats[key] {
                 stat.count += 1
+                // The newest spelling wins; on a tie, the same one every time.
+                if date > stat.last || (date == stat.last && value < stat.value) { stat.value = value }
                 stat.last = max(stat.last, date)
                 stats[key] = stat
             } else {

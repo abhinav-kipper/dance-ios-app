@@ -93,11 +93,9 @@ struct FramingLibraryTests {
     @Test func setFramingPersistsClamped() throws {
         let ctx = try makeContext()
         let lib = LibraryService(context: ctx)
-        let o = try lib.addOriginal(title: "T", fileName: "t.mov", duration: 100, recordedAt: nil, to: nil)
-        let c = try lib.addClip(to: o, start: 10, end: 20)
+        let c = try lib.filedClip(in: try lib.createFolder(named: "Turns", in: nil), start: 10, end: 20)
         try lib.setFraming(c, Framing(zoom: 4, panX: 2, panY: 0))
         #expect(c.framing == Framing(zoom: 3, panX: 1, panY: 0))
         #expect(c.previewSource?.range == 10...13)
-        #expect(o.previewSource.range == 30...33)
     }
 }

@@ -2,10 +2,10 @@ import SwiftUI
 import SwiftData
 import RepasoCore
 
-/// A clip's (or video's) notes as a page from a practice notebook: warm paper, ruled lines, a pink margin and
+/// A clip's notes as a page from a practice notebook: warm paper, ruled lines, a pink margin and
 /// serif ink. Type straight onto the page; it saves when you close it.
 struct NotebookSheet: View {
-    let item: PlaybackItem
+    let clip: Clip
     @Environment(\.modelContext) private var ctx
     @Environment(AppEnvironment.self) private var env
     @Environment(\.dismiss) private var dismiss
@@ -30,7 +30,7 @@ struct NotebookSheet: View {
         .presentationDetents([.large])
         .presentationCornerRadius(Theme.Radius.sheet)
         .onAppear {
-            text = item.note ?? ""
+            text = clip.note ?? ""
             if text.isEmpty { writing = true }
         }
         .onDisappear(perform: save)
@@ -50,7 +50,7 @@ struct NotebookSheet: View {
                     .foregroundStyle(Self.ink)
                     .frame(minWidth: 44, minHeight: 44)
             }
-            Text(item.name)
+            Text(clip.name)
                 .font(.system(size: 30, weight: .bold, design: .serif))
                 .foregroundStyle(Self.ink)
                 .lineLimit(2)
@@ -106,24 +106,19 @@ struct NotebookSheet: View {
         .onTapGesture { writing = true }
     }
 
-    /// "Ataca & Alemana · Berlin · 10 Oct 2026"
+    /// "Ataca & Alemana · 10 Oct 2026"
     private var byline: String? {
-        guard let original = item.original, !original.isClipSource || !original.instructors.isEmpty else { return nil }
         var parts: [String] = []
-        if !original.instructors.isEmpty { parts.append(original.instructors.joined(separator: " & ")) }
-        if let event = original.event { parts.append(event) }
-        if let recorded = original.recordedAt { parts.append(recorded.formatted(date: .abbreviated, time: .omitted)) }
+        if !clip.instructors.isEmpty { parts.append(clip.instructors.joined(separator: " & ")) }
+        if let recorded = clip.recording?.recordedAt { parts.append(recorded.formatted(date: .abbreviated, time: .omitted)) }
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 
     private func save() {
-        guard text != (item.note ?? "") else { return }
+        guard text != (clip.note ?? "") else { return }
         let lib = env.library(ctx)
-        env.perform {
-            switch item {
-            case .clip(let clip): try lib.setNote(clip, text)
-            case .original(let original): try lib.setNote(original, text)
-            }
-        }
+        let clip = clip
+        let text = text
+        env.perform { try lib.setNote(clip, text) }
     }
 }

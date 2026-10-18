@@ -80,8 +80,8 @@ struct ShareSheet: View {
     }
 
     private func export() async {
-        guard let original = clip.original else { return }
-        let source = env.videos.url(for: original.fileName)
+        guard let recording = clip.recording else { return }
+        let source = env.videos.url(for: recording.fileName)
         guard FileManager.default.fileExists(atPath: source.path) else {
             failure = "Video file missing"
             return
@@ -91,7 +91,7 @@ struct ShareSheet: View {
         do {
             try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
             let destination = dir.appendingPathComponent(ClipExport.fileName(for: clip.name))
-            let range = ClipExport.timeRange(start: clip.start, end: clip.end, duration: original.duration)
+            let range = ClipExport.timeRange(start: clip.start, end: clip.end, duration: recording.duration)
             let (updates, sink) = AsyncStream.makeStream(of: Double.self)
             let job = Task.detached(priority: .userInitiated) {
                 defer { sink.finish() }

@@ -2,40 +2,10 @@ import SwiftUI
 import SwiftData
 import RepasoCore
 
-/// What "Folders…" is for: a clip or a whole video.
-enum LinkSubject: Identifiable {
-    case clip(Clip)
-    case original(Original)
-
-    var id: UUID {
-        switch self {
-        case .clip(let c): c.id
-        case .original(let o): o.id
-        }
-    }
-
-    var title: String { "Folders" }
-
-    /// Where it lives now (the first ticked folder keeps or takes this role).
-    var home: Folder? {
-        switch self {
-        case .clip(let c): c.effectiveFolder
-        case .original(let o): o.folder
-        }
-    }
-
-    var linked: [Folder] {
-        switch self {
-        case .clip(let c): c.linkedFolders
-        case .original(let o): o.linkedFolders
-        }
-    }
-}
-
-/// "Folders…": a folder tree with checkboxes, ticked wherever the item shows. One place for moving it and for showing
+/// "Folders…": a folder tree with checkboxes, ticked wherever the clip shows. One place for moving it and for showing
 /// it in more folders (like a song in playlists): it lives in the first ticked folder and also appears in the rest.
 struct LinkSheet: View {
-    let subject: LinkSubject
+    let clip: Clip
     @Environment(\.modelContext) private var ctx
     @Environment(AppEnvironment.self) private var env
     @Environment(\.dismiss) private var dismiss
@@ -52,10 +22,10 @@ struct LinkSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             VStack(alignment: .leading, spacing: 4) {
-                Text(subject.title)
+                Text("Folders")
                     .font(.system(size: 22, weight: .bold))
                     .foregroundStyle(Theme.textPrimary)
-                Text(subject.isClip ? "Tick every folder this clip should show in." : "Tick every folder this video should show in.")
+                Text("Tick every folder this clip should show in.")
                     .font(.system(size: 13))
                     .foregroundStyle(Theme.textSecondary)
             }
@@ -74,10 +44,10 @@ struct LinkSheet: View {
         .padding(.horizontal, Theme.gutter)
         .repasoSheet()
         .onAppear {
-            selected = Set((subject.linked + [subject.home].compactMap { $0 }).map(\.id))
+            selected = Set((clip.linkedFolders + [clip.folder].compactMap { $0 }).map(\.id))
             expanded = Set(roots.map(\.id))
             // Open the path down to every ticked folder and the home.
-            for folder in subject.linked + [subject.home].compactMap({ $0 }) {
+            for folder in clip.linkedFolders + [clip.folder].compactMap({ $0 }) {
                 folder.ancestors.forEach { expanded.insert($0.id) }
             }
         }
@@ -146,44 +116,28 @@ struct LinkSheet: View {
         // Tree order, so "the first ticked folder" is the one highest in the list.
         let chosen = rows.map(\.folder).filter { selected.contains($0.id) }
             + selected.subtracting(rows.map(\.folder.id)).compactMap { byID[$0] }
-        let before = (subject.home.map { [$0] } ?? []) + subject.linked
+        let before = (clip.folder.map { [$0] } ?? []) + clip.linkedFolders
         let beforeIDs = Set(before.map(\.id))
         dismiss()
         guard Set(chosen.map(\.id)) != beforeIDs else { return }
         let lib = env.library(ctx)
-        let subject = subject
-        env.perform { try Self.place(subject, lib, in: chosen) }
+        let clip = clip
+        env.perform { try lib.place(clip, in: chosen) }
         let env = env
-        env.showToast(Self.summary(subject, chosen: chosen)) {
-            env.perform { try Self.place(subject, lib, in: before) }
+        env.showToast(Self.summary(clip)) {
+            env.perform { try lib.place(clip, in: before) }
         }
     }
 
-    private static func place(_ subject: LinkSubject, _ lib: LibraryService, in folders: [Folder]) throws {
-        switch subject {
-        case .clip(let c): try lib.place(c, in: folders)
-        case .original(let o): try lib.place(o, in: folders)
-        }
-    }
-
-    /// "In Turns", "In Turns and 2 more", or where it went when nothing is ticked.
-    private static func summary(_ subject: LinkSubject, chosen: [Folder]) -> String {
-        guard let first = subject.home ?? chosen.first else {
-            return subject.isClip ? "Back with its video" : "Moved to Unsorted"
-        }
-        let others = (chosen.count) - 1
-        return others > 0 ? "In \(first.name) and \(others) more" : "In \(first.name)"
+    /// "In Turns" or "In Turns and 2 more". With nothing ticked a clip stays where it lives.
+    private static func summary(_ clip: Clip) -> String {
+        let home = clip.folder?.name ?? ""
+        let others = clip.linkedFolders.count
+        return others > 0 ? "In \(home) and \(others) more" : "In \(home)"
     }
 }
 
-extension LinkSubject {
-    var isClip: Bool {
-        if case .clip = self { return true }
-        return false
-    }
-}
-
-/// Small 🔗 badge for a video or clip that shows in this folder through a link.
+/// Small 🔗 badge for a clip that shows in this folder through a link.
 struct LinkBadge: View {
     let home: String
 

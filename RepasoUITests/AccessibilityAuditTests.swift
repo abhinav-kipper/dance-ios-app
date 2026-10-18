@@ -24,9 +24,9 @@ final class AccessibilityAuditTests: XCTestCase {
         // Trim… opens the cutter with the clip selected (handles on screen too)
         wrap.press(forDuration: 1.0)
         app.buttons["Trim…"].tap()
-        XCTAssertTrue(app.buttons["Mark start"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.descendants(matching: .any)["Clip start"].firstMatch.waitForExistence(timeout: 3),
+        XCTAssertTrue(app.descendants(matching: .any)["Clip start"].firstMatch.waitForExistence(timeout: 5),
                       "the trimmed clip starts selected")
+        XCTAssertFalse(app.buttons["Mark start"].exists, "Trim only trims; new clips are made when importing")
         try audit("Cut")
         app.buttons["Done"].tap()
 

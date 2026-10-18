@@ -11,6 +11,7 @@ public struct LibraryService {
     /// Notes are a notebook page, not a caption: room for counts, hand placement, how it should feel.
     public static let noteLimit = 1000
     public static let defaultFolderName = "New folder"
+    public static let orphansName = "Orphans"
 
     public let context: ModelContext
     private let cleanup: FileCleanup?
@@ -68,145 +69,118 @@ public struct LibraryService {
     public func deleteFolder(_ folder: Folder, mode: FolderDeleteMode) throws {
         switch mode {
         case .deleteContents:
-            var files: [String] = []
+            var gone = Set<UUID>()
             var thumbs: [UUID] = []
-            collectAndDelete(folder, files: &files, thumbs: &thumbs)
+            collectAndDelete(folder, deletedClips: &gone, thumbs: &thumbs)
+            let files = dropEmptyRecordings(touchedBy: gone)
             try save()
             if !files.isEmpty || !thumbs.isEmpty { cleanup?(files, thumbs) }
         case .moveContentsUp:
+            guard !folder.isOrphans else { throw LibraryError.invalidMoveTarget }
             let target = folder.parent
+            // A top-level folder's clips have nowhere above them: they go to Orphans.
+            let clipTarget = try target ?? (folder.clips.isEmpty ? nil : orphansFolder(saving: false))
             var next = (try siblings(of: target).map(\.sortIndex).max() ?? -1) + 1
             for child in folder.children.sorted(by: { $0.sortIndex < $1.sortIndex }) {
                 child.parent = target
                 child.sortIndex = next
                 next += 1
             }
-            let originals = folder.originals
-            let loose = folder.looseClips
-            for original in originals { original.folder = target }
-            for clip in loose { clip.folder = target }
-            // Items only linked here are linked to the parent instead (root has no links).
+            for clip in folder.clips { clip.folder = clipTarget }
+            // Clips only linked here are linked to the parent instead (root has no links).
             if let target {
-                for original in folder.linkedOriginals where !original.linkedFolders.contains(where: { $0.id == target.id }) {
-                    original.linkedFolders.append(target)
-                }
                 for clip in folder.linkedClips where !clip.linkedFolders.contains(where: { $0.id == target.id }) {
                     clip.linkedFolders.append(target)
                 }
             }
-            let linkedOwners = folder.linkedOriginals + folder.linkedClips.compactMap(\.original)
-            normaliseClips(in: originals + loose.compactMap(\.original) + linkedOwners)
+            for clip in folder.clips + folder.linkedClips {
+                clip.linkedFolders.removeAll { $0.id == clip.folder?.id }
+            }
             context.delete(folder)
             try save()
         }
     }
 
-    private func collectAndDelete(_ folder: Folder, files: inout [String], thumbs: inout [UUID]) {
-        for child in folder.children { collectAndDelete(child, files: &files, thumbs: &thumbs) }
-        for original in folder.originals {
-            files.append(original.fileName)
-            thumbs.append(original.id)
-            thumbs.append(contentsOf: original.clips.map(\.id))
-            context.delete(original)
+    /// The folder clips land in when their top-level folder is deleted; made on Home (last) the first time.
+    @discardableResult
+    public func orphansFolder() throws -> Folder {
+        try orphansFolder(saving: true)
+    }
+
+    private func orphansFolder(saving: Bool) throws -> Folder {
+        if let found = try context.fetch(FetchDescriptor<Folder>(predicate: #Predicate { $0.isOrphans })).first {
+            return found
         }
-        // Skip clips whose original is being deleted in this pass (cascade handles them).
-        for clip in folder.looseClips where !(clip.original.map { files.contains($0.fileName) } ?? false) {
+        let folder = Folder(name: Self.orphansName, sortIndex: (try siblings(of: nil).map(\.sortIndex).max() ?? -1) + 1)
+        folder.isOrphans = true
+        context.insert(folder)
+        if saving { try save() }
+        return folder
+    }
+
+    private func collectAndDelete(_ folder: Folder, deletedClips: inout Set<UUID>, thumbs: inout [UUID]) {
+        for child in folder.children { collectAndDelete(child, deletedClips: &deletedClips, thumbs: &thumbs) }
+        for clip in folder.clips {
+            deletedClips.insert(clip.id)
             thumbs.append(clip.id)
             context.delete(clip)
         }
         context.delete(folder)
     }
 
-    // MARK: Originals
-
-    @discardableResult
-    public func addOriginal(title: String, fileName: String, duration: Double, recordedAt: Date?, to folder: Folder?,
-                            instructors: [String] = [], event: String? = nil) throws -> Original {
-        let original = Original(title: title, fileName: fileName, duration: duration, recordedAt: recordedAt, folder: folder)
-        original.instructors = TagText.normalized(instructors)
-        original.event = event.flatMap(Self.cleanName)
-        context.insert(original)
-        try save()
-        return original
-    }
-
-    public func moveOriginal(_ original: Original, to folder: Folder?) throws {
-        original.folder = folder
-        normaliseClips(in: [original])
-        try save()
-    }
-
-    /// Instructor and event tags for a batch of originals (the import sheet's fields).
-    public func setTags(_ originals: [Original], instructors: [String], event: String?) throws {
-        let names = TagText.normalized(instructors)
-        let cleanEvent = event.flatMap(Self.cleanName)
-        for original in originals {
-            original.instructors = names
-            original.event = cleanEvent
+    /// Deletes filed recordings left with no clips once `deletedClips` are gone; returns their files.
+    private func dropEmptyRecordings(touchedBy deletedClips: Set<UUID>) -> [String] {
+        let recordings = (try? context.fetch(FetchDescriptor<Recording>(predicate: #Predicate { !$0.isPending }))) ?? []
+        var files: [String] = []
+        for recording in recordings where recording.clips.contains(where: { deletedClips.contains($0.id) }) {
+            guard recording.clips.allSatisfy({ deletedClips.contains($0.id) }) else { continue }
+            files.append(recording.fileName)
+            context.delete(recording)
         }
-        try save()
+        return files
     }
 
-    public func deleteOriginal(_ original: Original) throws {
-        let file = original.fileName
-        let thumbs = [original.id] + original.clips.map(\.id)
-        context.delete(original)
+    // MARK: Recordings
+
+    /// A newly imported video: pending, last in Unsorted's order.
+    @discardableResult
+    public func addRecording(fileName: String, duration: Double, recordedAt: Date?, photosAssetID: String?) throws -> Recording {
+        let all = try context.fetch(FetchDescriptor<Recording>())
+        let recording = Recording(fileName: fileName, duration: duration, recordedAt: recordedAt,
+                                  photosAssetID: photosAssetID, sortIndex: (all.map(\.sortIndex).max() ?? -1) + 1)
+        context.insert(recording)
         try save()
-        cleanup?([file], thumbs)
+        return recording
     }
 
     // MARK: Clips
 
+    /// A named clip of `recording`. It has no folder until the guide's last step.
     @discardableResult
-    public func addClip(to original: Original, start: Double, end: Double) throws -> Clip {
-        let range = ClipRange.normalized(start: start, end: end, duration: original.duration)
-        let number = original.nextClipNumber
-        original.nextClipNumber += 1
-        let sortIndex = (original.clips.map(\.sortIndex).max() ?? -1) + 1
-        let clip = Clip(name: "Clip \(number)", start: range.lowerBound, end: range.upperBound, sortIndex: sortIndex, original: original)
+    public func addClip(to recording: Recording, name: String, instructors: [String], start: Double, end: Double) throws -> Clip {
+        guard let cleanName = Self.cleanName(name) else { throw LibraryError.emptyName }
+        let range = ClipRange.normalized(start: start, end: end, duration: recording.duration)
+        let sortIndex = (recording.clips.map(\.sortIndex).max() ?? -1) + 1
+        let clip = Clip(name: cleanName, start: range.lowerBound, end: range.upperBound, sortIndex: sortIndex, recording: recording)
+        clip.instructors = TagText.normalized(instructors)
+        recording.keepWholeVideo = nil   // a new clip changes what the full video is for: ask again
         context.insert(clip)
         try save()
         return clip
     }
 
+    /// The full video, kept as a clip of its own.
+    @discardableResult
+    public func addWholeClip(to recording: Recording, name: String, instructors: [String]) throws -> Clip {
+        try addClip(to: recording, name: name, instructors: instructors, start: 0, end: recording.duration)
+    }
+
     public func updateRange(_ clip: Clip, start: Double, end: Double) throws {
-        let range = ClipRange.normalized(start: start, end: end, duration: clip.original?.duration ?? end)
+        let range = ClipRange.normalized(start: start, end: end, duration: clip.recording?.duration ?? end)
         clip.start = range.lowerBound
         clip.end = range.upperBound
         try save()
         cleanup?([], [clip.id])   // poster is stale
-    }
-
-    /// Title, note and tags of a video ("Edit details…"); a blank title keeps the old one.
-    public func updateDetails(_ original: Original, title: String, note: String, instructors: [String], event: String?) throws {
-        original.title = Self.cleanName(title) ?? original.title
-        original.note = Self.cleanNote(note)
-        original.instructors = TagText.normalized(instructors)
-        original.event = event.flatMap(Self.cleanName)
-        try save()
-    }
-
-    /// Gives a clip its own short video (`fileName`, already in the store, `duration` long), so its full video can be
-    /// deleted. The clip keeps its name, note, marks, links and the folder it shows in.
-    public func detach(_ clip: Clip, intoFile fileName: String, duration: Double) throws {
-        guard let old = clip.original else { return }
-        let source = Original(title: clip.name, fileName: fileName, duration: duration,
-                              recordedAt: old.recordedAt, folder: nil, importedAt: old.importedAt)
-        source.isClipSource = true
-        source.instructors = old.instructors
-        source.event = old.event
-        context.insert(source)
-        clip.folder = clip.effectiveFolder   // stays where it was shown
-        clip.original = source
-        clip.start = 0
-        clip.end = duration
-        try save()
-    }
-
-    /// Renames a video; a blank title keeps the old one.
-    public func renameOriginal(_ original: Original, to title: String) throws {
-        original.title = Self.cleanName(title) ?? original.title
-        try save()
     }
 
     static func cleanNote(_ note: String) -> String? {
@@ -214,31 +188,36 @@ public struct LibraryService {
         return trimmed.isEmpty ? nil : String(trimmed.prefix(noteLimit))
     }
 
+    /// A blank name keeps the old one.
     public func updateInfo(_ clip: Clip, name: String, note: String) throws {
         clip.name = Self.cleanName(name) ?? clip.name
         clip.note = Self.cleanNote(note)
         try save()
     }
 
-    /// `folder == nil` files the clip back "with its video".
-    public func moveClip(_ clip: Clip, to folder: Folder?) throws {
+    public func setInstructors(_ clip: Clip, _ names: [String]) throws {
+        clip.instructors = TagText.normalized(names)
+        try save()
+    }
+
+    public func moveClip(_ clip: Clip, to folder: Folder) throws {
         clip.folder = folder
-        if let original = clip.original { normaliseClips(in: [original]) }
+        clip.linkedFolders.removeAll { $0.id == folder.id }
         try save()
     }
 
     /// Files a clip by drag. nil when it already lives in `folder` (nothing changes).
     public func dropClip(_ clip: Clip, on folder: Folder) throws -> ClipMoveReceipt? {
-        guard clip.effectiveFolder?.id != folder.id else { return nil }
+        guard clip.folder?.id != folder.id else { return nil }
         let receipt = ClipMoveReceipt(clip: clip, previousFolder: clip.folder, destination: folder)
         try moveClip(clip, to: folder)
         return receipt
     }
 
-    /// Puts a dropped clip back. A since-deleted previous folder means "with its video".
+    /// Puts a dropped clip back. If its previous folder has since been deleted it stays where it was dropped.
     public func undo(_ receipt: ClipMoveReceipt) throws {
-        guard receipt.clip.modelContext != nil, !receipt.clip.isDeleted else { return }
-        let previous = receipt.previousFolder.flatMap { $0.modelContext == nil || $0.isDeleted ? nil : $0 }
+        guard receipt.clip.modelContext != nil, !receipt.clip.isDeleted,
+              let previous = receipt.previousFolder, previous.modelContext != nil, !previous.isDeleted else { return }
         try moveClip(receipt.clip, to: previous)
     }
 
@@ -251,39 +230,16 @@ public struct LibraryService {
         try save()
     }
 
-    // MARK: Links (also shown in other folders)
-
-    /// Replaces the folders a video also shows in. Its home and duplicates are dropped.
-    // MARK: Folders… (one place to say where something shows)
+    // MARK: Folders… (one place to say where a clip shows)
 
     /// The clip shows in exactly `folders`: it keeps living where it is if that's still ticked, otherwise it moves to
-    /// the first one, and shows in the rest through links. Nothing ticked: it goes back with its video.
+    /// the first one, and shows in the rest through links. Nothing ticked: it stays where it lives, with no links.
     public func place(_ clip: Clip, in folders: [Folder]) throws {
         let ids = Set(folders.map(\.id))
-        if folders.isEmpty {
-            clip.folder = nil
-        } else if let home = clip.effectiveFolder, ids.contains(home.id) {
-            // stays where it lives
-        } else {
-            clip.folder = folders[0]
+        if let first = folders.first, !(clip.folder.map { ids.contains($0.id) } ?? false) {
+            clip.folder = first
         }
-        if let original = clip.original { normaliseClips(in: [original]) }
-        clip.linkedFolders = Self.links(folders, excludingHome: clip.effectiveFolder)
-        try save()
-    }
-
-    /// The video shows in exactly `folders` (same rule as clips). Nothing ticked: back to Unsorted.
-    public func place(_ original: Original, in folders: [Folder]) throws {
-        let ids = Set(folders.map(\.id))
-        if folders.isEmpty {
-            original.folder = nil
-        } else if let home = original.folder, ids.contains(home.id) {
-            // stays where it lives
-        } else {
-            original.folder = folders[0]
-        }
-        normaliseClips(in: [original])
-        original.linkedFolders = Self.links(folders, excludingHome: original.folder)
+        clip.linkedFolders = Self.links(folders, excludingHome: clip.folder)
         try save()
     }
 
@@ -292,24 +248,9 @@ public struct LibraryService {
         try save()
     }
 
-    public func setNote(_ original: Original, _ note: String) throws {
-        original.note = Self.cleanNote(note)
-        try save()
-    }
-
-    public func setLinks(_ original: Original, to folders: [Folder]) throws {
-        original.linkedFolders = Self.links(folders, excludingHome: original.folder)
-        try save()
-    }
-
     /// Replaces the folders a clip also shows in. Its home and duplicates are dropped.
     public func setLinks(_ clip: Clip, to folders: [Folder]) throws {
-        clip.linkedFolders = Self.links(folders, excludingHome: clip.effectiveFolder)
-        try save()
-    }
-
-    public func unlink(_ original: Original, from folder: Folder) throws {
-        original.linkedFolders.removeAll { $0.id == folder.id }
+        clip.linkedFolders = Self.links(folders, excludingHome: clip.folder)
         try save()
     }
 
@@ -338,27 +279,111 @@ public struct LibraryService {
         try save()
     }
 
+    /// Deletes the clip; a filed recording left with no clips goes too, with its file.
     public func deleteClip(_ clip: Clip) throws {
         let id = clip.id
+        let files = dropEmptyRecordings(touchedBy: [id])
         context.delete(clip)
         try save()
-        cleanup?([], [id])
+        cleanup?(files, [id])
+    }
+
+    // MARK: Import guide
+
+    /// A clip's own exported video: a file already in the store, `duration` long.
+    public struct OwnFile: Sendable, Equatable {
+        public let clipID: UUID
+        public let fileName: String
+        public let duration: Double
+
+        public init(clipID: UUID, fileName: String, duration: Double) {
+            self.clipID = clipID
+            self.fileName = fileName
+            self.duration = duration
+        }
+    }
+
+    /// The "Keep the full video too?" answer (nil: not asked yet).
+    public func setKeepWholeVideo(_ recording: Recording, _ keep: Bool?) throws {
+        recording.keepWholeVideo = keep
+        try save()
+    }
+
+    /// The clips that need their own file before `recording` can go: all but one covering the whole video.
+    public func clipsNeedingOwnFiles(_ recording: Recording) -> [Clip] {
+        FolderContents.sortClips(recording.clips.filter { !$0.coversWholeRecording }, by: .manual)
+    }
+
+    /// The guide's last step: every clip gets its folder and the video leaves Unsorted. With `ownFiles` (the guide's
+    /// "Delete it"), those clips move onto their own files in the same save and the full video goes.
+    public func finish(_ recording: Recording, folders: [UUID: Folder], ownFiles: [OwnFile] = []) throws {
+        guard recording.isPending else { throw LibraryError.notPending }
+        guard recording.clips.allSatisfy({ folders[$0.id] != nil }) else { throw LibraryError.missingFolder }
+        try checkOwnFiles(ownFiles, on: recording)
+        for clip in recording.clips { clip.folder = folders[clip.id] }
+        recording.isPending = false
+        let files = moveToOwnFiles(ownFiles, from: recording)
+        try save()
+        if !files.isEmpty { cleanup?(files, []) }
+    }
+
+    /// Moves each named clip onto its own recording (start 0, the file's length), keeping everything else about it.
+    /// The old recording goes once it has no clips left. Nothing changes if any clip isn't on `recording`.
+    public func adoptOwnFiles(_ files: [OwnFile], from recording: Recording) throws {
+        try checkOwnFiles(files, on: recording)
+        let removed = moveToOwnFiles(files, from: recording)
+        try save()
+        if !removed.isEmpty { cleanup?(removed, []) }
+    }
+
+    /// Deletes the clip that is the full video; the other clips of that video move onto `files` first.
+    public func deleteWholeClip(_ clip: Clip, siblingsMovedTo files: [OwnFile]) throws {
+        guard let recording = clip.recording else { return }
+        try checkOwnFiles(files, on: recording)
+        let id = clip.id
+        context.delete(clip)
+        recording.clips.removeAll { $0.id == id }
+        let removed = moveToOwnFiles(files, from: recording)
+        try save()
+        cleanup?(removed, [id])
+    }
+
+    /// Deletes a video still in the guide or Unsorted, with the clips made from it so far.
+    public func deletePending(_ recording: Recording) throws {
+        guard recording.isPending else { throw LibraryError.notPending }
+        let file = recording.fileName
+        let thumbs = [recording.id] + recording.clips.map(\.id)
+        context.delete(recording)
+        try save()
+        cleanup?([file], thumbs)
+    }
+
+    private func checkOwnFiles(_ files: [OwnFile], on recording: Recording) throws {
+        let ids = Set(recording.clips.map(\.id))
+        guard files.allSatisfy({ ids.contains($0.clipID) }) else { throw LibraryError.unknownClip }
+    }
+
+    /// Unsaved. Returns the old file when the recording is left empty and deleted.
+    private func moveToOwnFiles(_ files: [OwnFile], from recording: Recording) -> [String] {
+        guard !files.isEmpty else { return [] }
+        for file in files {
+            guard let clip = recording.clips.first(where: { $0.id == file.clipID }) else { continue }
+            let own = Recording(fileName: file.fileName, duration: file.duration, recordedAt: recording.recordedAt,
+                                photosAssetID: nil, sortIndex: recording.sortIndex, importedAt: recording.importedAt)
+            own.isPending = recording.isPending
+            context.insert(own)
+            clip.recording = own
+            clip.start = 0
+            clip.end = file.duration
+        }
+        let moved = Set(files.map(\.clipID))
+        recording.clips.removeAll { moved.contains($0.id) }
+        guard recording.clips.isEmpty else { return [] }
+        context.delete(recording)
+        return [recording.fileName]
     }
 
     // MARK: Helpers
-
-    /// A clip filed in the same folder as its original "lives with its video", and nothing is linked to its
-    /// own home.
-    private func normaliseClips(in originals: [Original]) {
-        for original in originals {
-            original.linkedFolders.removeAll { $0.id == original.folder?.id }
-            for clip in original.clips {
-                if clip.folder != nil && clip.folder?.id == original.folder?.id { clip.folder = nil }
-                let home = clip.effectiveFolder?.id
-                clip.linkedFolders.removeAll { $0.id == home }
-            }
-        }
-    }
 
     private func siblings(of parent: Folder?) throws -> [Folder] {
         if let parent { return parent.children }

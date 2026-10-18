@@ -2,11 +2,16 @@ import SwiftUI
 import SwiftData
 import RepasoCore
 
-/// Cut mode: play the original, Mark start → Mark end to create clips, trim them on the filmstrip.
+/// The cutter: play a recording and trim its clips on the filmstrip. In the import guide it also marks new clips
+/// (Mark start → Mark end hands the range to `onClipMarked`, which names it).
 struct CutView: View {
-    let original: Original
+    let recording: Recording
     /// Trim…: this clip starts selected, with the strip at it.
     var focusClipID: UUID?
+    /// Set by the import guide: Mark start / Mark end are offered and each marked range goes here.
+    var onClipMarked: ((ClosedRange<Double>) -> Void)?
+    /// Set by the import guide: Done hands over instead of closing.
+    var onDone: (() -> Void)?
     @Environment(\.modelContext) private var ctx
     @Environment(AppEnvironment.self) private var env
     @Environment(\.dismiss) private var dismiss
@@ -17,16 +22,11 @@ struct CutView: View {
     @State private var renameRequest: UUID?
     /// Swipe down on the video to close Cut, like closing a photo.
     @State private var closeDrag: CGFloat = 0
-    /// Clips the video had when Cut opened; making more prompts "Keep the full video?" on Done.
-    @State private var clipsAtOpen: Int?
-    @State private var askKeep = false
-    /// Saving clips as their own videos: (finished, total).
-    @State private var keeping: (Int, Int)?
     /// The Mark button explains itself ("where the move begins") until the first clip is cut.
     @AppStorage("hint.cut.marked") private var hasMarked = false
 
     private var clips: [Clip] {
-        FolderContents.sortClips(original.clips, by: .dateAdded)
+        FolderContents.sortClips(recording.clips, by: .dateAdded)
     }
 
     var body: some View {
@@ -38,13 +38,12 @@ struct CutView: View {
         }
         .onAppear {
             if model == nil {
-                let made = CutModel(original: original, videos: env.videos)
-                if let focusClipID, let clip = original.clips.first(where: { $0.id == focusClipID }) {
+                let made = CutModel(recording: recording, videos: env.videos)
+                if let focusClipID, let clip = recording.clips.first(where: { $0.id == focusClipID }) {
                     made.selectedID = clip.id
                     made.seek(clip.start)
                 }
                 model = made
-                clipsAtOpen = original.clips.count
             }
             UIApplication.shared.isIdleTimerDisabled = true
         }
@@ -52,72 +51,19 @@ struct CutView: View {
             UIApplication.shared.isIdleTimerDisabled = false
             model?.tearDown()
         }
-        .overlay { if let keeping { keepingOverlay(keeping) } }
-        .confirmationDialog("Keep the full video?", isPresented: $askKeep, titleVisibility: .visible) {
-            Button("Keep full video") { dismiss() }
-            Button("Keep only the clips", role: .destructive, action: keepOnlyClips)
-            Button("Not now", role: .cancel) {}
-        } message: {
-            Text(keepMessage)
-        }
         .toastHost(env)
     }
 
-    private var keepMessage: String {
-        let n = original.clips.count
-        let clips = n == 1 ? "Your clip is saved." : "Your \(n) clips are saved."
-        let size = ClipKeeper.sizeText(of: original, env: env).map { " and frees \($0)" } ?? ""
-        return "\(clips) Keeping only the clips deletes the full video\(size). You can still trim each clip within its length."
-    }
-
-    /// Done (or a pull down): asks about the full video if clips were made this time, otherwise closes.
+    /// Done (or a pull down) leaves the cutter.
     private func finish(_ model: CutModel) {
         model.session.cancelMark()
-        if let clipsAtOpen, original.clips.count > clipsAtOpen, !original.isClipSource {
-            askKeep = true
-        } else {
-            dismiss()
-        }
+        if let onDone { onDone() } else { dismiss() }
     }
 
-    private func keepOnlyClips() {
-        model?.pause()
-        let count = original.clips.count   // they move to their own videos as they're saved
-        keeping = (0, count)
-        let original = original
-        let env = env
-        let ctx = ctx
-        Task {
-            do {
-                try await ClipKeeper.saveClipsAsOwnVideos(of: original, env: env, context: ctx) { done, total in
-                    keeping = (done, total)
-                }
-                dismiss()
-                try? await Task.sleep(for: .seconds(0.5))   // the cutter must be gone before its video is
-                env.perform { try env.library(ctx).deleteOriginal(original) }
-                env.showToast(count == 1 ? "Full video deleted · 1 clip kept" : "Full video deleted · \(count) clips kept")
-            } catch {
-                keeping = nil
-                env.showToast("Couldn't save the clips; the full video is kept", seconds: 3)
-            }
-        }
-    }
-
-    private func keepingOverlay(_ progress: (Int, Int)) -> some View {
-        ZStack {
-            Color.black.opacity(0.55).ignoresSafeArea()
-            VStack(spacing: 14) {
-                ProgressView(value: Double(progress.0), total: Double(max(progress.1, 1)))
-                    .tint(Theme.accent)
-                    .frame(width: 200)
-                Text("Saving clip \(min(progress.0 + 1, progress.1)) of \(progress.1)…")
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(Theme.textPrimary)
-            }
-            .padding(24)
-            .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
-        }
-        .accessibilityElement(children: .combine)
+    /// The clip being trimmed, or the video's date in the guide.
+    private var title: String {
+        if let focusClipID, let clip = recording.clips.first(where: { $0.id == focusClipID }) { return clip.name }
+        return ImportCoordinator.title(recordedAt: recording.recordedAt)
     }
 
     private func content(_ model: CutModel) -> some View {
@@ -129,8 +75,10 @@ struct CutView: View {
                 env.perform { try env.library(ctx).updateRange(clip, start: range.lowerBound, end: range.upperBound) }
             }
             .padding(.horizontal, Theme.gutter)
-            markButton(model)
-                .padding(.horizontal, Theme.gutter)
+            if onClipMarked != nil {
+                markButton(model)
+                    .padding(.horizontal, Theme.gutter)
+            }
             ClipTray(model: model, clips: clips, renameRequest: $renameRequest) { clip, name in
                 env.perform { try env.library(ctx).updateInfo(clip, name: name, note: clip.note ?? "") }
             }
@@ -150,7 +98,7 @@ struct CutView: View {
                 PlayerLayerView(player: model.player)
                     .contentShape(Rectangle())
                     .onTapGesture { model.togglePlay() }
-                    .gesture(closeGesture(model))
+                    .gesture(closeGesture(model), including: onDone == nil ? .all : .none)   // the guide closes with its own bar
                     .accessibilityLabel(model.isPlaying ? "Pause" : "Play")
                     .accessibilityAddTraits(.isButton)
             }
@@ -162,35 +110,39 @@ struct CutView: View {
                     LinearKeyframe(0, duration: 0.5)
                 }
                 .allowsHitTesting(false)
-            HStack {
-                Button {
-                    finish(model)
-                } label: {
-                    Text("Done")
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(Theme.textPrimary)
-                        .padding(.horizontal, 16)
-                        .frame(height: 44)
-                }
-                .controlGlass(in: Capsule(), tint: Theme.overVideoTint)
-                Spacer()
-                Text(original.title)
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(Theme.textPrimary)
-                    .lineLimit(1)
-                    .padding(.horizontal, 14)
-                    .frame(height: 36)
-                    .glassEffect(.regular.tint(Theme.overVideoTint), in: Capsule())
-                Spacer()
-                Color.clear.frame(width: 70, height: 44)
-            }
-            .padding(.horizontal, 16)
-            .padding(.top, 58)
+            if onDone == nil { topBar(model) }   // in the import guide, the guide's own bar sits here
             if !model.missingFile { videoControls(model) }
         }
         .clipShape(UnevenRoundedRectangle(bottomLeadingRadius: 34, bottomTrailingRadius: 34, style: .continuous))
         .offset(y: closeDrag)
         .scaleEffect(1 - min(closeDrag, 300) / 1500, anchor: .top)
+    }
+
+    private func topBar(_ model: CutModel) -> some View {
+        HStack {
+            Button {
+                finish(model)
+            } label: {
+                Text("Done")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(Theme.textPrimary)
+                    .padding(.horizontal, 16)
+                    .frame(height: 44)
+            }
+            .controlGlass(in: Capsule(), tint: Theme.overVideoTint)
+            Spacer()
+            Text(title)
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(Theme.textPrimary)
+                .lineLimit(1)
+                .padding(.horizontal, 14)
+                .frame(height: 36)
+                .glassEffect(.regular.tint(Theme.overVideoTint), in: Capsule())
+            Spacer()
+            Color.clear.frame(width: 70, height: 44)
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 58)
     }
 
     /// Pull the video down to close; a short pull springs back.
@@ -301,13 +253,9 @@ struct CutView: View {
             model.play()
             return
         }
-        env.perform {
-            let clip = try env.library(ctx).addClip(to: original, start: range.lowerBound, end: range.upperBound)
-            withAnimation(.easeOut(duration: 0.3)) { hasMarked = true }
-            model.selectedID = clip.id
-            let request = $renameRequest
-            let id = clip.id
-            env.showToast("\(clip.name) added", actionTitle: "Name", undo: { request.wrappedValue = id }, seconds: 3.5)
-        }
+        withAnimation(.easeOut(duration: 0.3)) { hasMarked = true }
+        model.pause()
+        model.seek(range.lowerBound)
+        onClipMarked?(range)
     }
 }

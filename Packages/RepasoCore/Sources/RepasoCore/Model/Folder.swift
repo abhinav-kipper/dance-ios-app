@@ -9,11 +9,12 @@ public final class Folder {
     public var createdAt: Date
     public var parent: Folder?
     @Relationship(deleteRule: .nullify, inverse: \Folder.parent) public var children: [Folder] = []
-    @Relationship(deleteRule: .nullify, inverse: \Original.folder) public var originals: [Original] = []
-    @Relationship(deleteRule: .nullify, inverse: \Clip.folder) public var looseClips: [Clip] = []
-    /// Videos and clips whose home is elsewhere but are also shown here.
-    public var linkedOriginals: [Original] = []
+    /// Clips that live here.
+    @Relationship(deleteRule: .nullify, inverse: \Clip.folder) public var clips: [Clip] = []
+    /// Clips whose home is elsewhere but are also shown here.
     public var linkedClips: [Clip] = []
+    /// The folder clips land in when their top-level folder is deleted.
+    public var isOrphans: Bool = false
 
     public init(name: String, sortIndex: Int, parent: Folder? = nil, createdAt: Date = .now) {
         self.id = UUID()

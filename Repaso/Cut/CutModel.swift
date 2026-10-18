@@ -28,11 +28,11 @@ final class CutModel {
     private var seekInFlight = false
     private var pendingSeek: (time: Double, precise: Bool)?
 
-    init(original: Original, videos: VideoStore) {
-        duration = original.duration
-        session = CutSession(duration: original.duration)
-        visibleSeconds = CutStrip.clampVisible(CutStrip.defaultVisible, duration: original.duration)
-        videoURL = videos.url(for: original.fileName)
+    init(recording: Recording, videos: VideoStore) {
+        duration = recording.duration
+        session = CutSession(duration: recording.duration)
+        visibleSeconds = CutStrip.clampVisible(CutStrip.defaultVisible, duration: recording.duration)
+        videoURL = videos.url(for: recording.fileName)
         missingFile = !FileManager.default.fileExists(atPath: videoURL.path)
         player.automaticallyWaitsToMinimizeStalling = false
         if !missingFile {

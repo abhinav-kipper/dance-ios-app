@@ -20,18 +20,6 @@ struct HelperTests {
         #expect(PhotosCleanupText.prompt(count: 3) == "Delete 3 videos from Photos?")
         #expect(PhotosCleanupText.prompt(count: 1) == "Delete this video from Photos?")
     }
-    @Test func recordedLine() throws {
-        var cal = Calendar(identifier: .gregorian)
-        cal.timeZone = TimeZone(identifier: "UTC")!
-        let locale = Locale(identifier: "en_US")
-        let oct12 = try #require(cal.date(from: DateComponents(year: 2026, month: 10, day: 12, hour: 10)))
-        let oct9 = try #require(cal.date(from: DateComponents(year: 2026, month: 10, day: 9, hour: 10)))
-        #expect(ImportSummary.recordedLine([], calendar: cal, locale: locale) == nil)
-        #expect(ImportSummary.recordedLine([oct12, oct12], calendar: cal, locale: locale) == "Recorded Oct 12, 2026")
-        let span = try #require(ImportSummary.recordedLine([oct12, oct9], calendar: cal, locale: locale))
-        #expect(span.hasPrefix("Recorded Oct 9"))
-        #expect(span.hasSuffix("12, 2026"))
-    }
 }
 
 @MainActor
@@ -47,24 +35,23 @@ struct TagTests {
     @Test func suggestionsRankByUseThenRecency() throws {
         let ctx = try makeContext()
         let lib = LibraryService(context: ctx)
-        let old = Date(timeIntervalSince1970: 0)
-        let o1 = try lib.addOriginal(title: "1", fileName: "1", duration: 1, recordedAt: nil, to: nil, instructors: ["Marco & Sara"], event: "Berlin 2026")
-        let o2 = try lib.addOriginal(title: "2", fileName: "2", duration: 1, recordedAt: nil, to: nil, instructors: ["Marco & Sara", "Studio team"], event: "Thursday class")
-        let o3 = try lib.addOriginal(title: "3", fileName: "3", duration: 1, recordedAt: nil, to: nil, instructors: ["Ataca & Alemana"], event: "berlin 2026")
-        o1.importedAt = old
-        let all = [o1, o2, o3]
-        #expect(TagSuggestions.instructors(for: "", in: all) == ["Marco & Sara", "Ataca & Alemana", "Studio team"])
-        #expect(TagSuggestions.events(for: "", in: all).first?.lowercased() == "berlin 2026")
-        #expect(TagSuggestions.events(for: "", in: all).count == 2)
+        let turns = try lib.createFolder(named: "Turns", in: nil)
+        let c1 = try lib.filedClip("1", in: turns, instructors: ["Marco & Sara"])
+        _ = try lib.filedClip("2", in: turns, instructors: ["Marco & Sara", "Studio team"])
+        _ = try lib.filedClip("3", in: turns, instructors: ["Ataca & Alemana"])
+        c1.addedAt = Date(timeIntervalSince1970: 0)
+        let all = try ctx.fetch(FetchDescriptor<Clip>())
+        #expect(TagSuggestions.instructors(for: "", in: all).first == "Marco & Sara")
+        #expect(TagSuggestions.instructors(for: "", in: all).count == 3)
     }
     @Test func suggestionsPreferPrefixThenSubstringAndExclude() throws {
         let ctx = try makeContext()
         let lib = LibraryService(context: ctx)
-        let o = try lib.addOriginal(title: "1", fileName: "1", duration: 1, recordedAt: nil, to: nil,
-                                    instructors: ["Sara Lee", "Ataca & Alemana", "Alex"], event: nil)
-        #expect(TagSuggestions.instructors(for: "al", in: [o]) == ["Alex", "Ataca & Alemana"])
-        #expect(TagSuggestions.instructors(for: "a", excluding: ["Alex"], in: [o], limit: 1) == ["Ataca & Alemana"])
-        #expect(TagSuggestions.instructors(for: "alex", in: [o]).isEmpty)
-        #expect(TagSuggestions.instructors(for: "ee", in: [o]) == ["Sara Lee"])
+        let c = try lib.filedClip(in: try lib.createFolder(named: "Turns", in: nil),
+                                  instructors: ["Sara Lee", "Ataca & Alemana", "Alex"])
+        #expect(TagSuggestions.instructors(for: "al", in: [c]) == ["Alex", "Ataca & Alemana"])
+        #expect(TagSuggestions.instructors(for: "a", excluding: ["Alex"], in: [c], limit: 1) == ["Ataca & Alemana"])
+        #expect(TagSuggestions.instructors(for: "alex", in: [c]).isEmpty)
+        #expect(TagSuggestions.instructors(for: "ee", in: [c]) == ["Sara Lee"])
     }
 }

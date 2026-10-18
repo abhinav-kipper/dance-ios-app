@@ -2,7 +2,7 @@ import AVFoundation
 import Observation
 import RepasoCore
 
-/// Plays one clip range of an original on a single reused AVPlayer, looping per `LoopController`.
+/// Plays one clip range of a recording on a single reused AVPlayer, looping per `LoopController`.
 @Observable @MainActor
 final class PlayerModel {
     let player = AVPlayer()
@@ -10,7 +10,7 @@ final class PlayerModel {
     private(set) var progress: Double = 0
     private(set) var restingSeconds: Double?
     private(set) var missingFile = false
-    /// Playhead in seconds within the original, and the video's frame rate, for frame stepping.
+    /// Playhead in seconds within the recording, and the video's frame rate, for frame stepping.
     private(set) var currentTime: Double = 0
     private(set) var frameRate: Double = 30
     var loop = LoopController()
@@ -41,7 +41,7 @@ final class PlayerModel {
         }
     }
 
-    func load(_ item: PlaybackItem, videos: VideoStore) {
+    func load(_ clip: Clip, videos: VideoStore) {
         cancelRest()
         // Here, not in init: SwiftUI may build throwaway @State initial values on parent re-renders.
         // Both calls can block, so they stay off the main thread and tap-to-play stays instant.
@@ -50,17 +50,17 @@ final class PlayerModel {
             try? session.setCategory(.playback, mode: .moviePlayback)
             try? session.setActive(true)
         }
-        guard let original = item.original else {
+        guard let recording = clip.recording else {
             missingFile = true
             return
         }
-        let url = videos.url(for: original.fileName)
+        let url = videos.url(for: recording.fileName)
         missingFile = !FileManager.default.fileExists(atPath: url.path)
         guard !missingFile else {
             player.replaceCurrentItem(with: nil)
             return
         }
-        range = item.range
+        range = clip.range
         progress = 0
         currentTime = range.lowerBound
         let asset = AVURLAsset(url: url)

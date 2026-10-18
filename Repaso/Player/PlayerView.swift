@@ -2,7 +2,7 @@ import SwiftUI
 import SwiftData
 import RepasoCore
 
-/// Full-screen player for clips or whole videos: tap to play/pause, hold a side to step frames, speed, notes,
+/// Full-screen player for clips: tap to play/pause, hold a side to step frames, speed, notes,
 /// favorite, learned. Clips always loop. The control panel slides away while playing.
 struct PlayerView: View {
     let request: PlayerRequest
@@ -16,12 +16,10 @@ struct PlayerView: View {
     @State private var idleTask: Task<Void, Never>?
     @State private var flash = 0
     @State private var ringProgress: Double = 1
-    @State private var deletingOriginal: Original?
     @State private var librarySheet: LibrarySheet?
     @State private var showNotes = false
     @State private var cutting: CutRequest?
-    @State private var fullVideo: PlayerRequest?
-    @State private var confirmingDelete = false
+    @State private var deleting: Clip?
     @State private var sharing: Clip?
     @State private var index: Int
     // Swipe between clips
@@ -69,9 +67,7 @@ struct PlayerView: View {
         _index = State(initialValue: request.index)
     }
 
-    private var item: PlaybackItem { request.items[index] }
-    /// nil while playing a whole video.
-    private var clip: Clip? { item.clip }
+    private var clip: Clip { request.items[index] }
 
     var body: some View {
         ZStack {
@@ -143,19 +139,11 @@ struct PlayerView: View {
         }
         .sheet(item: $sharing) { ShareSheet(clip: $0) }
         .sheet(item: $librarySheet) { $0.content }
-        .sheet(isPresented: $showNotes, onDismiss: wake) { NotebookSheet(item: item) }
+        .sheet(isPresented: $showNotes, onDismiss: wake) { NotebookSheet(clip: clip) }
         .fullScreenCover(item: $cutting, onDismiss: { loadCurrentClip() }) {   // reload: the trim may have changed the range
-            CutView(original: $0.original, focusClipID: $0.focusClipID)
+            CutView(recording: $0.recording, focusClipID: $0.focusClipID)
         }
-        .fullScreenCover(item: $fullVideo) { PlayerView(request: $0) }
-        .confirmationDialog("Delete this clip?", isPresented: $confirmingDelete, titleVisibility: .visible) {
-            Button("Delete clip", role: .destructive, action: deleteCurrentClip)
-        } message: {
-            Text("The video stays in your library.")
-        }
-        .sheet(item: $deletingOriginal) { original in
-            DeleteOriginalSheet(original: original) { dismiss() }
-        }
+        .clipDeleteDialog($deleting) { dismiss() }   // close first: the clip must not be on screen when it goes
     }
 
     // MARK: Chrome
@@ -213,7 +201,7 @@ struct PlayerView: View {
             HStack(alignment: .firstTextBaseline) {
                 nameView
                 Spacer()
-                Text(scrubbing ? TimeFormat.precise(model.positionInItem) : TimeFormat.duration(item.length))
+                Text(scrubbing ? TimeFormat.precise(model.positionInItem) : TimeFormat.duration(clip.length))
                     .font(Theme.mono(14))
                     .foregroundStyle(Theme.textSecondary)
             }
@@ -222,7 +210,7 @@ struct PlayerView: View {
                 .foregroundStyle(Theme.textSecondary)
                 .lineLimit(1)
                 .padding(.top, -10)
-            if let note = item.note {
+            if let note = clip.note {
                 // A peek at the notebook; tap to open it.
                 Text(note)
                     .font(.system(size: 15, design: .serif).italic())
@@ -238,10 +226,8 @@ struct PlayerView: View {
             HStack(spacing: 8) {
                 notesButton
                 Spacer(minLength: 4)
-                if let clip {
-                    favoriteButton(clip)
-                    learnedButton(clip)
-                }
+                favoriteButton(clip)
+                learnedButton(clip)
                 moreMenu
             }
         }
@@ -385,7 +371,7 @@ struct PlayerView: View {
     /// Clip names rename in place: tap, type, return.
     @ViewBuilder
     private var nameView: some View {
-        if renaming, let clip {
+        if renaming {
             TextField(clip.name, text: $nameDraft)   // the current name shows as the hint
                 .font(.system(size: 20, weight: .bold))
                 .foregroundStyle(Theme.textPrimary)
@@ -396,14 +382,14 @@ struct PlayerView: View {
                 .accessibilityLabel("Clip name")
                 .accessibilityIdentifier("Clip name")
         } else {
-            Text(item.name)
+            Text(clip.name)
                 .font(.system(size: 20, weight: .bold))
                 .foregroundStyle(Theme.textPrimary)
                 .lineLimit(1)
                 .contentShape(Rectangle())
                 .onTapGesture { startRenaming() }
-                .accessibilityAddTraits(clip == nil ? [] : .isButton)
-                .accessibilityHint(clip == nil ? "" : "Renames the clip")
+                .accessibilityAddTraits(.isButton)
+                .accessibilityHint("Renames the clip")
                 .accessibilityIdentifier("player-clip-name")
         }
     }
@@ -422,19 +408,15 @@ struct PlayerView: View {
     }
 
     private var source: String {
-        guard let original = item.original else { return "" }
-        if clip == nil { return original.recordedAt?.formatted(date: .abbreviated, time: .omitted) ?? "Whole video" }
-        // Tagged at import: "Ataca & Alemana · Berlin 2026".
-        let tags = [original.instructors.joined(separator: " & "), original.event ?? ""].filter { !$0.isEmpty }
-        if !tags.isEmpty { return tags.joined(separator: " · ") }
-        guard let recorded = original.recordedAt else { return original.title }
-        return "\(original.title) · \(recorded.formatted(date: .abbreviated, time: .omitted))"
+        // Named at import: "Ataca & Alemana · 10 Oct 2026".
+        let recorded = clip.recording.flatMap { $0.recordedAt ?? $0.importedAt }?.formatted(date: .abbreviated, time: .omitted)
+        return ([clip.instructors.joined(separator: " & ")] + [recorded ?? ""]).filter { !$0.isEmpty }.joined(separator: " · ")
     }
 
     /// Clips always loop with no pause, so the row's first button opens the notebook instead.
     private var notesButton: some View {
         Button(action: openNotes) {
-            Label("Notes", systemImage: item.note == nil ? "book.closed" : "book.closed.fill")
+            Label("Notes", systemImage: clip.note == nil ? "book.closed" : "book.closed.fill")
                 .font(.system(size: 14, weight: .semibold))
                 .lineLimit(1)
                 .fixedSize()
@@ -444,7 +426,7 @@ struct PlayerView: View {
                 .background(Theme.roseTint, in: Capsule())
         }
         .buttonStyle(PressableButtonStyle())
-        .accessibilityLabel(item.note == nil ? "Notes, empty" : "Notes")
+        .accessibilityLabel(clip.note == nil ? "Notes, empty" : "Notes")
     }
 
     private func openNotes() {
@@ -490,32 +472,19 @@ struct PlayerView: View {
     /// Everything you can do to the clip or video without leaving the Player.
     private var moreMenu: some View {
         Menu {
-            if let clip {
-                Button("Trim…", systemImage: "timeline.selection") {
-                    guard let original = clip.original else { return }
-                    model.pause()
-                    cutting = CutRequest(original: original, focusClipID: clip.id)
-                }
-                if let original = clip.original, !original.isClipSource {
-                    Button("Play full video", systemImage: "film") {
-                        model.pause()
-                        fullVideo = PlayerRequest(items: [.original(original)], index: 0, title: original.title)
-                    }
-                }
-                Divider()
-                Button("Folders…", systemImage: "folder") { librarySheet = .link(.clip(clip)) }
-                Button("Share", systemImage: "square.and.arrow.up") {
-                    model.pause()
-                    sharing = clip
-                }
-                Divider()
-                Button("Delete clip", systemImage: "trash", role: .destructive) { confirmingDelete = true }
-            } else if let original = item.original {
-                Button("Edit details…", systemImage: "pencil") { librarySheet = .videoInfo(original) }
-                Button("Folders…", systemImage: "folder") { librarySheet = .link(.original(original)) }
-                Divider()
-                Button("Delete video", systemImage: "trash", role: .destructive) { deletingOriginal = original }
+            Button("Trim…", systemImage: "timeline.selection") {
+                guard let recording = clip.recording else { return }
+                model.pause()
+                cutting = CutRequest(recording: recording, focusClipID: clip.id)
             }
+            Divider()
+            Button("Folders…", systemImage: "folder") { librarySheet = .link(clip) }
+            Button("Share", systemImage: "square.and.arrow.up") {
+                model.pause()
+                sharing = clip
+            }
+            Divider()
+            Button("Delete clip", systemImage: "trash", role: .destructive) { deleting = clip }
         } label: {
             Image(systemName: "ellipsis")
                 .font(.system(size: 17, weight: .bold))
@@ -532,23 +501,10 @@ struct PlayerView: View {
     }
 
     private func startRenaming() {
-        guard clip != nil else { return }
         nameDraft = ""   // empty: typing replaces the name; return with nothing keeps it
         renaming = true
         nameFocused = true
         showPanel()
-    }
-
-    /// Closes the Player first: the clip must not be on screen when it is deleted.
-    private func deleteCurrentClip() {
-        guard let clip else { return }
-        let env = env
-        let ctx = ctx
-        dismiss()
-        Task {
-            try? await Task.sleep(for: .seconds(0.5))
-            env.perform { try env.library(ctx).deleteClip(clip) }
-        }
     }
 
     // MARK: Video and gestures
@@ -755,21 +711,19 @@ struct PlayerView: View {
     }
 
     private func loadCurrentClip() {
-        framing = item.framing
+        framing = clip.framing
         showFrameChip = false
         stepping = false
         renaming = false
         showCover()
-        model.load(item, videos: env.videos)
+        model.load(clip, videos: env.videos)
         prefetchNeighbours()
-        if let clip { env.perform { try env.library(ctx).markPlayed(clip) } }
+        env.perform { try env.library(ctx).markPlayed(clip) }
         showPanel()
         wake()
     }
 
-    /// Only clips remember their framing.
     private func saveFraming() {
-        guard let clip else { return }
         let framing = framing
         env.perform { try env.library(ctx).setFraming(clip, framing) }
     }
@@ -790,7 +744,7 @@ struct PlayerView: View {
 
     /// Puts the new item's first frame (decoded ahead) over the player until the player has drawn it.
     private func showCover() {
-        cover = startFrames.images[StartFrames.key(item)]
+        cover = startFrames.images[StartFrames.key(clip)]
         coverTimeout?.cancel()
         guard cover != nil else { return }
         coverTimeout = Task {
@@ -864,7 +818,7 @@ struct PlayerView: View {
             Text("Video file missing")
                 .font(.system(size: 20, weight: .bold))
                 .foregroundStyle(Theme.textPrimary)
-            Button("Delete video") { deletingOriginal = item.original }
+            Button("Delete clip") { deleting = clip }
                 .font(.system(size: 15, weight: .semibold))
                 .foregroundStyle(.white)
                 .padding(.horizontal, 20)

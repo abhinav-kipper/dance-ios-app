@@ -21,6 +21,11 @@ struct RepasoApp: App {
 
     init() {
         do {
+            if uiTesting {
+                UserDefaults.standard.removeObject(forKey: "import.lastFolderID")   // each test starts with no remembered folder
+            } else {
+                RepasoSchema.removeLegacyStore()   // clips-only model: the old store isn't migrated
+            }
             container = try RepasoSchema.makeContainer(inMemory: uiTesting)
             _env = State(initialValue: try AppEnvironment())
         } catch {

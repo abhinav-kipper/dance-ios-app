@@ -1,7 +1,7 @@
 import SwiftUI
 import RepasoCore
 
-/// Cached poster frame for a clip or original; neutral placeholder until it loads.
+/// Cached poster frame for a clip or recording; neutral placeholder until it loads.
 /// With `live`, a muted looping preview plays over the poster whenever the app grants it a slot.
 struct PosterView: View {
     let request: ThumbnailRequest?

@@ -8,15 +8,12 @@ struct HomeView: View {
     @Environment(AppEnvironment.self) private var env
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Query(filter: #Predicate<Folder> { $0.parent == nil }, sort: \Folder.sortIndex) private var folders: [Folder]
-    @Query(filter: #Predicate<Original> { $0.folder == nil }) private var unsorted: [Original]
+    @Query(filter: #Predicate<Recording> { $0.isPending }) private var pending: [Recording]
     @Query(filter: #Predicate<Clip> { $0.isFavorite }) private var favorites: [Clip]
-    @Query private var allClips: [Clip]
-    @Query private var allOriginals: [Original]
     @Query private var allFolders: [Folder]
     @State private var path: [Route] = []
     @State private var picks: [PhotosPickerItem] = []
     @State private var showPicker = false
-    @State private var showImport = false
     @State private var editingFolderID: UUID?
     @State private var deletingFolder: Folder?
     /// Card order while a folder is being dragged; committed when the drag ends.
@@ -48,13 +45,12 @@ struct HomeView: View {
                          preferredItemEncoding: .current, photoLibrary: .shared())
             .onChange(of: picks) { _, new in
                 guard !new.isEmpty else { return }
-                env.importer.start(new, into: nil, context: ctx, env: env)
+                env.startImport(new, from: nil, context: ctx)
                 picks = []
-                showImport = true
             }
-            .sheet(isPresented: $showImport) { ImportSheet() }
             .sheet(item: $deletingFolder) { DeleteFolderSheet(folder: $0) }
             .fullScreenCover(isPresented: $showGuide) { GuideView() }
+            .fullScreenCover(item: Binding(get: { env.guide }, set: { env.guide = $0 })) { ImportGuideView(model: $0) }
             .onAppear {
                 guard !guideSeen, !ProcessInfo.processInfo.arguments.contains("-uiTesting") else { return }
                 guideSeen = true
@@ -63,10 +59,9 @@ struct HomeView: View {
             .navigationDestination(for: Route.self) { route in
                 switch route {
                 case .folder(let id): FolderView(folderID: id, path: $path)
-                case .unsorted: FolderView(folderID: nil, path: $path)
+                case .unsorted: UnsortedView()
                 case .favorites: FavoritesView()
                 case .search: SearchView(path: $path)
-                case .videos: VideosView()
                 }
             }
             .toolbar(.hidden, for: .navigationBar)
@@ -74,7 +69,6 @@ struct HomeView: View {
             .onChange(of: reduceMotion, initial: true) { _, on in env.previews.setReduceMotion(on) }
             .onChange(of: env.pendingRoute) { _, route in
                 guard let route else { return }
-                showImport = false
                 path = route
                 env.pendingRoute = nil
             }
@@ -153,7 +147,7 @@ struct HomeView: View {
     private var libraryContent: some View {
         VStack(alignment: .leading, spacing: 24) {
             header
-            if folders.isEmpty && allOriginals.isEmpty {
+            if folders.isEmpty && pending.isEmpty {
                 emptyState
             } else {
                 searchPill
@@ -211,10 +205,10 @@ struct HomeView: View {
 
     private var pinnedTiles: some View {
         HStack(spacing: 14) {
-            if unsortedCount > 0 {
+            if !pending.isEmpty {
                 NavigationLink(value: Route.unsorted) {
-                    tile(icon: "tray", iconColor: Theme.textPrimary, title: "Unsorted",
-                         detail: "\(unsortedCount) to sort", dot: true)
+                    tile(icon: "tray", iconColor: Theme.rose, title: "Unsorted · \(pending.count)",
+                         detail: pending.count == 1 ? "1 video to go through" : "\(pending.count) to go through", dot: true)
                 }
                 .buttonStyle(PressableButtonStyle())
             }
@@ -223,21 +217,7 @@ struct HomeView: View {
                      detail: favorites.count == 1 ? "1 clip" : "\(favorites.count) clips", dot: false)
             }
             .buttonStyle(PressableButtonStyle())
-            let videoCount = FolderContents.allVideos(allOriginals).count
-            if videoCount > 0 {
-                NavigationLink(value: Route.videos) {
-                    tile(icon: "film.stack", iconColor: Theme.accent, title: "Videos",
-                         detail: videoCount == 1 ? "1 full video" : "\(videoCount) full", dot: false)
-                }
-                .buttonStyle(PressableButtonStyle())
-            }
         }
-    }
-
-    /// Videos waiting to be cut plus clips not yet filed: what Unsorted holds.
-    private var unsortedCount: Int {
-        FolderContents.unsortedVideosToCut(unsorted, sort: .manual).count
-            + FolderContents.unsortedClips(of: unsorted, sort: .manual, hideLearned: false).count
     }
 
     private func tile(icon: String, iconColor: Color, title: String, detail: String, dot: Bool) -> some View {
@@ -366,7 +346,7 @@ struct HomeView: View {
     }
 
     private func requestDelete(_ folder: Folder) {
-        if folder.children.isEmpty && folder.originals.isEmpty && folder.looseClips.isEmpty {
+        if folder.children.isEmpty && folder.clips.isEmpty {
             env.perform { try env.library(ctx).deleteFolder(folder, mode: .deleteContents) }
         } else {
             deletingFolder = folder
