@@ -304,7 +304,7 @@ struct FileDemo: View {
 }
 
 /// Tap a side for a frame, swipe up for the next clip.
-struct PractiseDemo: View {
+struct PracticeDemo: View {
     var body: some View {
         DemoClock(duration: 4.6) { t in
             let swipe = seg(t, 0.58, 0.78)

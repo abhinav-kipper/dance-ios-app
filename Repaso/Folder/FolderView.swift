@@ -57,8 +57,8 @@ struct FolderView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
                 header
-                subfolderSection
-                if !clips.isEmpty || subfolders.count > 1 { chips }   // they act on what's below, so they sit above it
+                if !subfolders.isEmpty { subfolderSection }
+                if !clips.isEmpty || subfolders.isEmpty { chips }   // they act on what's below, so they sit above it
                 clipsSection
             }
             .padding(.horizontal, Theme.gutter)
@@ -137,40 +137,69 @@ struct FolderView: View {
 
     private var chips: some View {
         HStack(spacing: 10) {
-            Menu {
-                Picker("Sort", selection: $sortRaw) {
-                    ForEach(ClipSort.allCases, id: \.rawValue) { Text($0.title).tag($0.rawValue) }
-                }
-            } label: {
-                Chip(title: "Sort", systemImage: "arrow.up.arrow.down")
-            }
-            .accessibilityLabel("Sort, \(sort.title)")
-            Button {
-                withAnimation(Theme.spring) { hideLearned.toggle() }
-            } label: {
-                Chip(title: "Hide learned", systemImage: "checkmark", isOn: hideLearned)
-            }
-            .buttonStyle(PressableButtonStyle())
-            .accessibilityAddTraits(hideLearned ? .isSelected : [])
-            if !clips.isEmpty || subfolders.count > 1 {
-                Button {
-                    if !arranging { sortRaw = ClipSort.manual.rawValue }   // the order being arranged is the manual one
-                    withAnimation(Theme.spring) { arranging.toggle() }
+            if !clips.isEmpty {
+                Menu {
+                    Picker("Sort", selection: $sortRaw) {
+                        ForEach(ClipSort.allCases, id: \.rawValue) { Text($0.title).tag($0.rawValue) }
+                    }
                 } label: {
-                    Chip(title: arranging ? "Done" : "Arrange", systemImage: arranging ? "checkmark" : "hand.draw",
-                         isOn: arranging)
+                    Chip(title: "Sort", systemImage: "arrow.up.arrow.down")
+                }
+                .accessibilityLabel("Sort, \(sort.title)")
+                Button {
+                    withAnimation(Theme.spring) { hideLearned.toggle() }
+                } label: {
+                    Chip(title: "Hide learned", systemImage: "checkmark", isOn: hideLearned)
                 }
                 .buttonStyle(PressableButtonStyle())
-                .accessibilityLabel(arranging ? "Done arranging" : "Arrange clips and folders")
+                .accessibilityAddTraits(hideLearned ? .isSelected : [])
+            }
+            // With no subfolders yet, a chip makes the first one instead of a big empty card.
+            if subfolders.isEmpty {
+                Button(action: newSubfolder) {
+                    Chip(title: "Folder", systemImage: "plus")
+                }
+                .buttonStyle(PressableButtonStyle())
+                .accessibilityLabel("New subfolder")
             }
         }
     }
 
+    /// "Arrange" in a section header, like Home's; "Done" while arranging.
+    private var arrangeToggle: some View {
+        Button {
+            if !arranging { sortRaw = ClipSort.manual.rawValue }   // the order being arranged is the manual one
+            withAnimation(Theme.spring) { arranging.toggle() }
+        } label: {
+            if arranging {
+                Text("Done")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Theme.onAccent)
+                    .padding(.horizontal, 14)
+                    .frame(height: 30)
+                    .background(Theme.rose, in: Capsule())
+                    .frame(minHeight: 44)
+            } else {
+                Label("Arrange", systemImage: "hand.draw")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Theme.rose)
+                    .frame(minHeight: 44)
+            }
+        }
+        .buttonStyle(.plain)
+        .contentShape([.interaction, .accessibility], Rectangle())
+        .accessibilityLabel(arranging ? "Done arranging" : "Arrange clips and folders")
+    }
+
     private var subfolderSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text(clipArrange.isActive ? "Drop on a folder" : "Folders")
-                .sectionLabelStyle(clipArrange.isActive ? Theme.rose : Theme.textSecondary)
-                .animation(.easeOut(duration: 0.2), value: clipArrange.isActive)
+            HStack {
+                Text(clipArrange.isActive ? "Drop on a folder" : "Folders")
+                    .sectionLabelStyle(clipArrange.isActive ? Theme.rose : Theme.textSecondary)
+                    .animation(.easeOut(duration: 0.2), value: clipArrange.isActive)
+                Spacer()
+                if clips.isEmpty && subfolders.count > 1 { arrangeToggle }
+            }
             LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 3), spacing: 10) {
                 ForEach(folderArrange.arranged(subfolders)) { sub in
                     let editing = Binding(
@@ -219,7 +248,11 @@ struct FolderView: View {
     private var clipsSection: some View {
         if !clips.isEmpty {
             VStack(alignment: .leading, spacing: 12) {
-                Text("Clips").sectionLabelStyle()
+                HStack {
+                    Text("Clips").sectionLabelStyle()
+                    Spacer()
+                    if clips.count > 1 || subfolders.count > 1 || arranging { arrangeToggle }
+                }
                 LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)], spacing: 12) {
                     ForEach(Array(clipArrange.arranged(clips).enumerated()), id: \.element.id) { i, clip in
                         let linked = linkedHome(of: clip)
@@ -261,10 +294,6 @@ struct FolderView: View {
             trim: { clip in
                 guard let recording = clip.recording else { return }
                 cutting = CutRequest(recording: recording, focusClipID: clip.id)
-            },
-            arrange: {
-                sortRaw = ClipSort.manual.rawValue
-                withAnimation(Theme.spring) { arranging = true }
             })
     }
 

@@ -7,7 +7,7 @@ struct GuideView: View {
     @State private var page = 0
 
     struct Card: Identifiable {
-        enum Demo { case importing, cut, file, practise, arrange }
+        enum Demo { case importing, cut, file, practice, arrange }
         let id: Int
         let demo: Demo
         let title: String
@@ -15,11 +15,11 @@ struct GuideView: View {
     }
 
     static let cards: [Card] = [
-        Card(id: 0, demo: .importing, title: "Import", caption: "Tap Import, pick your class videos"),
-        Card(id: 1, demo: .cut, title: "Cut a move", caption: "Mark start, Mark end, name it"),
-        Card(id: 2, demo: .file, title: "File it", caption: "A folder for each clip, then Finish"),
-        Card(id: 3, demo: .practise, title: "Practise", caption: "Tap a side for one frame · swipe up for the next"),
-        Card(id: 4, demo: .arrange, title: "Arrange", caption: "Tap Arrange, then hold and drag"),
+        Card(id: 0, demo: .importing, title: "Import", caption: "Bring in your class videos from Photos."),
+        Card(id: 1, demo: .cut, title: "Cut a move", caption: "Mark where the move starts and ends, then name it."),
+        Card(id: 2, demo: .file, title: "File it", caption: "Choose a folder for each clip."),
+        Card(id: 3, demo: .practice, title: "Practice", caption: "Tap either side to step a frame. Swipe up for the next clip."),
+        Card(id: 4, demo: .arrange, title: "Arrange", caption: "Tap Arrange, then hold and drag to reorder."),
     ]
 
     private var isLast: Bool { page == Self.cards.count - 1 }
@@ -93,7 +93,7 @@ struct GuideView: View {
         case .importing: ImportDemo()
         case .cut: CutDemo()
         case .file: FileDemo()
-        case .practise: PractiseDemo()
+        case .practice: PracticeDemo()
         case .arrange: ArrangeDemo()
         }
     }

@@ -16,8 +16,6 @@ struct ClipActions {
     var folderName: String?
     /// Opens the cutter on the clip's video with the clip selected, to trim it.
     var trim: (Clip) -> Void = { _ in }
-    /// Turns on Arrange mode (drag to reorder, or onto a folder); nil where there's nothing to arrange.
-    var arrange: (() -> Void)?
 }
 
 /// The long-press menu every clip shares (rows, cards).
@@ -35,9 +33,6 @@ struct ClipMenuItems: View {
         Button("Folders…", systemImage: "folder") { actions.link(clip) }
         if linkedHome != nil, let unlink = actions.unlink {
             Button("Remove from \(actions.folderName ?? "this folder")", systemImage: "link.badge.plus") { unlink(clip) }
-        }
-        if let arrange = actions.arrange {
-            Button("Arrange", systemImage: "hand.draw") { arrange() }
         }
         Divider()
         Button("Share", systemImage: "square.and.arrow.up") { actions.share(clip) }

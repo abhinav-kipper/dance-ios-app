@@ -17,10 +17,10 @@ final class GuideAndNotesTests: XCTestCase {
 
         // The guide: open from ?, page through, finish
         app.buttons["How to use Repaso"].tap()
-        XCTAssertTrue(app.staticTexts["Tap Import, pick your class videos"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.staticTexts["Bring in your class videos from Photos."].waitForExistence(timeout: 3))
         snap("20-guide-first")
         for _ in 0..<4 { app.buttons["Next"].tap() }
-        XCTAssertTrue(app.staticTexts["Tap Arrange, then hold and drag"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.staticTexts["Tap Arrange, then hold and drag to reorder."].waitForExistence(timeout: 3))
         snap("21-guide-last")
         app.buttons["Start practising"].tap()
         XCTAssertTrue(app.buttons["New folder"].waitForExistence(timeout: 3), "the guide closes back to Home")
