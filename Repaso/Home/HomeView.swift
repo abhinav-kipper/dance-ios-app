@@ -11,6 +11,7 @@ struct HomeView: View {
     @Query(filter: #Predicate<Original> { $0.folder == nil }) private var unsorted: [Original]
     @Query(filter: #Predicate<Clip> { $0.isFavorite }) private var favorites: [Clip]
     @Query private var allClips: [Clip]
+    @Query private var allOriginals: [Original]
     @Query private var allFolders: [Folder]
     @State private var path: [Route] = []
     @State private var picks: [PhotosPickerItem] = []
@@ -21,6 +22,11 @@ struct HomeView: View {
     /// Card order while a folder is being dragged; committed when the drag ends.
     @State private var liveOrder: [UUID]?
     @State private var settleCounts: [UUID: Int] = [:]
+    @State private var showGuide = false
+    /// Arrange mode: press-and-hold drags folders to reorder them instead of opening their menu.
+    @State private var arranging = false
+    /// The how-to guide opens by itself once, on first launch (never during UI tests).
+    @AppStorage("guideSeen") private var guideSeen = false
 
     private let columns = [GridItem(.flexible(), spacing: 14), GridItem(.flexible(), spacing: 14)]
 
@@ -38,7 +44,7 @@ struct HomeView: View {
             .overlay(alignment: .bottom) {
                 FloatingPill(title: "Import videos", systemImage: "square.and.arrow.down") { showPicker = true }
             }
-            .photosPicker(isPresented: $showPicker, selection: $picks, matching: .videos,
+            .photosPicker(isPresented: $showPicker, selection: $picks, matching: .importableVideos,
                          preferredItemEncoding: .current, photoLibrary: .shared())
             .onChange(of: picks) { _, new in
                 guard !new.isEmpty else { return }
@@ -48,12 +54,19 @@ struct HomeView: View {
             }
             .sheet(isPresented: $showImport) { ImportSheet() }
             .sheet(item: $deletingFolder) { DeleteFolderSheet(folder: $0) }
+            .fullScreenCover(isPresented: $showGuide) { GuideView() }
+            .onAppear {
+                guard !guideSeen, !ProcessInfo.processInfo.arguments.contains("-uiTesting") else { return }
+                guideSeen = true
+                showGuide = true
+            }
             .navigationDestination(for: Route.self) { route in
                 switch route {
                 case .folder(let id): FolderView(folderID: id, path: $path)
                 case .unsorted: FolderView(folderID: nil, path: $path)
                 case .favorites: FavoritesView()
                 case .search: SearchView(path: $path)
+                case .videos: VideosView()
                 }
             }
             .toolbar(.hidden, for: .navigationBar)
@@ -91,13 +104,38 @@ struct HomeView: View {
                     .font(.system(size: 40, weight: .bold))
                     .tracking(-1.2)
                     .foregroundStyle(Theme.textPrimary)
-                Text(draggingFolderID == nil ? subtitle : "Drop to place")
-                    .font(.system(size: 15, weight: draggingFolderID == nil ? .regular : .semibold))
-                    .foregroundStyle(draggingFolderID == nil ? Theme.textSecondary : Theme.accent)
-                    .contentTransition(.opacity)
-                    .animation(.easeOut(duration: 0.2), value: draggingFolderID)
+                if draggingFolderID != nil || arranging {
+                    Text(draggingFolderID != nil ? "Drop to place" : "Hold a folder, then drag it")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(Theme.rose)
+                        .transition(.opacity)
+                }
             }
             Spacer()
+            if arranging {
+                Button {
+                    withAnimation(Theme.spring) { arranging = false }
+                } label: {
+                    Text("Done")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(Theme.onAccent)
+                        .padding(.horizontal, 18)
+                        .frame(height: 44)
+                        .background(Theme.rose, in: Capsule())
+                }
+                .buttonStyle(PressableButtonStyle())
+                .accessibilityLabel("Done arranging")
+                .padding(.top, 6)
+            } else {
+            Button { showGuide = true } label: {
+                Image(systemName: "questionmark")
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(Theme.textPrimary)
+                    .frame(width: 44, height: 44)
+            }
+            .controlGlass(in: Circle())
+            .accessibilityLabel("How to use Repaso")
+            .padding(.top, 6)
             Button(action: newFolder) {
                 Image(systemName: "folder.badge.plus")
                     .font(.system(size: 17, weight: .semibold))
@@ -107,19 +145,15 @@ struct HomeView: View {
             .controlGlass(in: Circle())
             .accessibilityLabel("New folder")
             .padding(.top, 6)
+            }
         }
     }
 
-    private var subtitle: String {
-        let clips = allClips.count == 1 ? "1 clip" : "\(allClips.count) clips"
-        let foldersText = allFolders.count == 1 ? "1 folder" : "\(allFolders.count) folders"
-        return "\(clips) in \(foldersText)"
-    }
 
     private var libraryContent: some View {
         VStack(alignment: .leading, spacing: 24) {
             header
-            if folders.isEmpty && unsorted.isEmpty {
+            if folders.isEmpty && allOriginals.isEmpty {
                 emptyState
             } else {
                 searchPill
@@ -131,7 +165,24 @@ struct HomeView: View {
 
     private var folderGrid: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Folders").sectionLabelStyle()
+            HStack {
+                Text("Folders").sectionLabelStyle()
+                Spacer()
+                if folders.count > 1 && !arranging {
+                    Button {
+                        withAnimation(Theme.spring) { arranging = true }
+                    } label: {
+                        Label("Arrange", systemImage: "hand.draw")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(Theme.rose)
+                            .frame(minHeight: 44)
+                            .contentShape([.interaction, .accessibility], Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Arrange folders")
+                    .transition(.opacity)
+                }
+            }
             LazyVGrid(columns: columns, spacing: 14) {
                 ForEach(displayedFolders) { folder in
                     folderCell(folder)
@@ -160,10 +211,10 @@ struct HomeView: View {
 
     private var pinnedTiles: some View {
         HStack(spacing: 14) {
-            if !unsorted.isEmpty {
+            if unsortedCount > 0 {
                 NavigationLink(value: Route.unsorted) {
                     tile(icon: "tray", iconColor: Theme.textPrimary, title: "Unsorted",
-                         detail: "\(unsorted.count) new", dot: true)
+                         detail: "\(unsortedCount) to sort", dot: true)
                 }
                 .buttonStyle(PressableButtonStyle())
             }
@@ -172,7 +223,21 @@ struct HomeView: View {
                      detail: favorites.count == 1 ? "1 clip" : "\(favorites.count) clips", dot: false)
             }
             .buttonStyle(PressableButtonStyle())
+            let videoCount = FolderContents.allVideos(allOriginals).count
+            if videoCount > 0 {
+                NavigationLink(value: Route.videos) {
+                    tile(icon: "film.stack", iconColor: Theme.accent, title: "Videos",
+                         detail: videoCount == 1 ? "1 full video" : "\(videoCount) full", dot: false)
+                }
+                .buttonStyle(PressableButtonStyle())
+            }
         }
+    }
+
+    /// Videos waiting to be cut plus clips not yet filed: what Unsorted holds.
+    private var unsortedCount: Int {
+        FolderContents.unsortedVideosToCut(unsorted, sort: .manual).count
+            + FolderContents.unsortedClips(of: unsorted, sort: .manual, hideLearned: false).count
     }
 
     private func tile(icon: String, iconColor: Color, title: String, detail: String, dot: Bool) -> some View {
@@ -183,7 +248,7 @@ struct HomeView: View {
                     .foregroundStyle(iconColor)
                 Spacer()
                 if dot {
-                    Circle().fill(Theme.accent).frame(width: 8, height: 8)
+                    Circle().fill(Theme.rose).frame(width: 8, height: 8)
                 }
             }
             VStack(alignment: .leading, spacing: 2) {
@@ -235,13 +300,14 @@ struct HomeView: View {
                 CubicKeyframe(1, duration: 0.36)
             }
         }
-        .jiggle(draggingFolderID != nil && !isPlaceholder)
-        .dragSource(DragRef(kind: .folder, id: folder.id), drag: env.drag, origin: nil) {
+        .jiggle((arranging || draggingFolderID != nil) && !isPlaceholder)
+        .dragSource(DragRef(kind: .folder, id: folder.id), drag: env.drag, origin: nil, enabled: arranging) {
             FolderLiftPreview(name: folder.name, clipCount: FolderContents.clipCount(in: folder), reduceMotion: reduceMotion)
         }
         .dragTarget(env.drag, isTargeted: { if $0 { reorder(onto: folder.id) } }) { $0.kind == .folder }
-        .contextMenu {
+        .modifier(MenuUnlessArranging(isArranging: arranging) {
             Button("Rename", systemImage: "pencil") { editingFolderID = folder.id }
+            Button("Arrange folders", systemImage: "hand.draw") { withAnimation(Theme.spring) { arranging = true } }
             Button("Move up", systemImage: "arrow.up") {
                 env.perform { try env.library(ctx).reorderFolder(folder, by: -1) }
             }
@@ -249,7 +315,7 @@ struct HomeView: View {
                 env.perform { try env.library(ctx).reorderFolder(folder, by: 1) }
             }
             Button("Delete", systemImage: "trash", role: .destructive) { requestDelete(folder) }
-        }
+        })
         .transition(reduceMotion ? .opacity : .scale(scale: 0.6).combined(with: .opacity))
     }
 

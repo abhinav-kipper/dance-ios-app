@@ -15,6 +15,9 @@ struct Filmstrip: View {
     /// A finger (or its momentum) is moving the strip: the video follows the strip.
     @State private var userScrolling = false
     @State private var pinchBase: Double?
+    /// One-time hints under the strip, gone once you've scrolled it / trimmed with it.
+    @AppStorage("hint.strip.scrolled") private var hasScrolled = false
+    @AppStorage("hint.strip.trimmed") private var hasTrimmed = false
     private var selected: Clip? { clips.first { $0.id == model.selectedID } }
 
     private var pps: Double { CutStrip.pointsPerSecond(visible: model.visibleSeconds, width: width) }
@@ -77,6 +80,7 @@ struct Filmstrip: View {
                     userScrolling = true
                     model.beginScrub()
                 }
+                if phase == .interacting && !hasScrolled { withAnimation(.easeOut(duration: 0.3)) { hasScrolled = true } }
             case .idle, .animating:
                 if userScrolling {
                     userScrolling = false
@@ -166,12 +170,22 @@ struct Filmstrip: View {
             }
     }
 
+    /// The next thing to learn about the strip, if any.
+    private var hint: String? {
+        if selected != nil { return hasTrimmed ? nil : "Drag the handles to trim" }
+        return hasScrolled ? nil : "Scroll to move · pinch to zoom"
+    }
+
     private var labels: some View {
         let half = model.visibleSeconds / 2
         return HStack {
             Text(TimeFormat.range(max(0, model.time - half)))
             Spacer()
-            Text(selected == nil ? "Scroll to move · pinch to zoom" : "Drag the handles to trim")
+            if let hint {
+                Text(hint)
+                    .foregroundStyle(Theme.rose)
+                    .transition(.opacity)
+            }
             Spacer()
             Text(TimeFormat.range(min(model.duration, model.time + half)))
         }
@@ -218,6 +232,7 @@ struct Filmstrip: View {
                     }
                     .onEnded { _ in
                         if let r = model.draftRange { onTrimEnd(clip, r) }
+                        if !hasTrimmed { withAnimation(.easeOut(duration: 0.3)) { hasTrimmed = true } }
                         model.draftRange = nil
                         model.endScrub()
                         scrollToTime()

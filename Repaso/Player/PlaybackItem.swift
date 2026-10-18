@@ -41,7 +41,12 @@ enum PlaybackItem: Identifiable {
 
     var length: Double { range.upperBound - range.lowerBound }
 
-    var note: String? { clip?.note }
+    var note: String? {
+        switch self {
+        case .clip(let c): c.note
+        case .original(let o): o.note
+        }
+    }
 
     /// Clips remember their zoom; whole videos start unzoomed each time.
     var framing: Framing { clip?.framing ?? .identity }

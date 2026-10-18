@@ -2,6 +2,13 @@ import SwiftUI
 import RepasoCore
 
 /// Opens the Player on `items[index]`.
+/// Opens the cutter on a video; with `focusClipID`, that clip starts selected (Trim…).
+struct CutRequest: Identifiable {
+    let id = UUID()
+    let original: Original
+    var focusClipID: UUID?
+}
+
 struct PlayerRequest: Identifiable {
     let id = UUID()
     let items: [PlaybackItem]
@@ -23,6 +30,7 @@ struct PlayerRequest: Identifiable {
 enum LibrarySheet: Identifiable {
     case move(MoveSubject)
     case info(Clip)
+    case videoInfo(Original)
     case deleteOriginal(Original)
     case deleteFolder(Folder)
     case share(Clip)
@@ -32,6 +40,7 @@ enum LibrarySheet: Identifiable {
         switch self {
         case .move(let s): "move-\(s.id)"
         case .info(let c): "info-\(c.id)"
+        case .videoInfo(let o): "vinfo-\(o.id)"
         case .deleteOriginal(let o): "delo-\(o.id)"
         case .deleteFolder(let f): "delf-\(f.id)"
         case .share(let c): "share-\(c.id)"
@@ -44,6 +53,7 @@ enum LibrarySheet: Identifiable {
         switch self {
         case .move(let subject): MoveSheet(subject: subject)
         case .info(let clip): ClipInfoSheet(clip: clip)
+        case .videoInfo(let original): VideoInfoSheet(original: original)
         case .deleteOriginal(let original): DeleteOriginalSheet(original: original)
         case .deleteFolder(let folder): DeleteFolderSheet(folder: folder)
         case .share(let clip): ShareSheet(clip: clip)

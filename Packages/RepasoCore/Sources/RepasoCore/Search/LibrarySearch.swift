@@ -19,7 +19,7 @@ public enum LibrarySearch {
         var out = Results()
         out.clips = ranked(clips.filter { $0.original != nil }, words: words, name: \.name,
                            others: clipFields, newest: \.addedAt)
-        out.videos = ranked(videos, words: words, name: \.title, others: videoFields, newest: \.importedAt)
+        out.videos = ranked(videos.filter { !$0.isClipSource }, words: words, name: \.title, others: videoFields, newest: \.importedAt)
         out.folders = ranked(folders, words: words, name: \.name,
                              others: { $0.ancestors.map(\.name) }, newest: \.createdAt)
         return out
@@ -36,7 +36,8 @@ public enum LibrarySearch {
     }
 
     private static func videoFields(_ original: Original) -> [String] {
-        original.instructors + [original.event ?? "", original.folder?.name ?? ""] + original.linkedFolders.map(\.name)
+        original.instructors + [original.event ?? "", original.note ?? "", original.folder?.name ?? ""]
+            + original.linkedFolders.map(\.name)
     }
 
     // MARK: Matching

@@ -15,6 +15,47 @@ struct ClipActions {
     var unlink: ((Clip) -> Void)?
     /// The folder being shown, for the "Remove from" label.
     var folderName: String?
+    /// Opens the cutter on the clip's video with the clip selected, to trim it.
+    var trim: (Clip) -> Void = { _ in }
+    /// Plays the clip's whole video (not offered for a clip whose full video was deleted).
+    var playFull: (Clip) -> Void = { _ in }
+    /// Turns on Arrange mode, where clips can be dragged onto folders; nil where there's nothing to drag to.
+    var arrange: (() -> Void)?
+}
+
+/// The long-press menu every clip shares (rows, cards).
+struct ClipMenuItems: View {
+    let clip: Clip
+    let actions: ClipActions
+    var linkedHome: String?
+    @Environment(AppEnvironment.self) private var env
+    @Environment(\.modelContext) private var ctx
+
+    var body: some View {
+        Button("Name & note…", systemImage: "pencil") { actions.info(clip) }
+        Button("Trim…", systemImage: "timeline.selection") { actions.trim(clip) }
+        if clip.original?.isClipSource == false {
+            Button("Play full video", systemImage: "film") { actions.playFull(clip) }
+        }
+        Divider()
+        Button("Move to folder…", systemImage: "folder") { actions.move(clip) }
+        Button("Add to folders…", systemImage: "folder.badge.plus") { actions.link(clip) }
+        if linkedHome != nil, let unlink = actions.unlink {
+            Button("Remove from \(actions.folderName ?? "this folder")", systemImage: "link.badge.plus") { unlink(clip) }
+        }
+        if let arrange = actions.arrange {
+            Button("Drag to folders", systemImage: "hand.draw") { arrange() }
+        }
+        Divider()
+        Button("Share", systemImage: "square.and.arrow.up") { actions.share(clip) }
+        Button(clip.isFavorite ? "Remove from favorites" : "Add to favorites", systemImage: "star") {
+            env.perform { try env.library(ctx).toggleFavorite(clip) }
+        }
+        Button(clip.isLearned ? "Mark as not learned" : "Mark as learned", systemImage: "checkmark") {
+            env.perform { try env.library(ctx).toggleLearned(clip) }
+        }
+        Button("Delete", systemImage: "trash", role: .destructive) { actions.delete(clip) }
+    }
 }
 
 /// Clip row: poster, name (up to two lines), duration, location tag and small favorite/learned marks.
@@ -63,18 +104,9 @@ struct ClipRow: View {
         .scaleEffect(isLifted ? 0.97 : 1)
         .animation(Theme.spring, value: isLifted)
         .modifier(ClipDragSource(clip: clip, drag: env.drag, origin: dragOrigin, isEnabled: isDraggable, reduceMotion: reduceMotion))
-        .contextMenu {
-            Button("Rename", systemImage: "pencil") { actions.info(clip) }
-            Button("Move", systemImage: "folder") { actions.move(clip) }
-            Button("Add to folders…", systemImage: "folder.badge.plus") { actions.link(clip) }
-            if linkedHome != nil, let unlink = actions.unlink {
-                Button("Remove from \(actions.folderName ?? "this folder")", systemImage: "link.badge.plus") { unlink(clip) }
-            }
-            Button("Share", systemImage: "square.and.arrow.up") { actions.share(clip) }
-            Button(clip.isFavorite ? "Remove from favorites" : "Add to favorites", systemImage: "star") { toggleFavorite() }
-            Button(clip.isLearned ? "Mark as not learned" : "Mark as learned", systemImage: "checkmark") { toggleLearned() }
-            Button("Delete", systemImage: "trash", role: .destructive) { actions.delete(clip) }
-        }
+        .modifier(MenuUnlessArranging(isArranging: isDraggable) {
+            ClipMenuItems(clip: clip, actions: actions, linkedHome: linkedHome)
+        })
     }
 
     @ViewBuilder
@@ -127,17 +159,23 @@ struct ClipRow: View {
     }
 
     private var isLifted: Bool { env.drag.active?.id == clip.id }
+}
 
-    private func toggleFavorite() {
-        env.perform { try env.library(ctx).toggleFavorite(clip) }
-    }
+/// Press-and-hold means the menu, except in Arrange mode, where it means drag (so the two never clash).
+struct MenuUnlessArranging<Items: View>: ViewModifier {
+    let isArranging: Bool
+    @ViewBuilder let items: () -> Items
 
-    private func toggleLearned() {
-        env.perform { try env.library(ctx).toggleLearned(clip) }
+    func body(content: Content) -> some View {
+        if isArranging {
+            content
+        } else {
+            content.contextMenu { items() }
+        }
     }
 }
 
-private struct ClipDragSource: ViewModifier {
+struct ClipDragSource: ViewModifier {
     let clip: Clip
     let drag: DragState
     let origin: UUID?

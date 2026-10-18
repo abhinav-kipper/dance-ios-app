@@ -15,7 +15,7 @@ struct ClipInfoSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("Clip info")
+            Text("Name & note")
                 .font(.system(size: 22, weight: .bold))
                 .foregroundStyle(Theme.textPrimary)
                 .padding(.top, 28)
@@ -55,7 +55,7 @@ struct ClipInfoSheet: View {
         .onAppear {
             name = clip.name
             note = clip.note ?? ""
-            nameFocused = true   // opened from "Rename": ready to type
+            nameFocused = true   // ready to type
         }
     }
 

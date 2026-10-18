@@ -18,10 +18,10 @@ final class WalkthroughTests: XCTestCase {
 
         // Folder
         turns.tap()
-        app.openClipDecks()
         let wrap = button(beginningWith: "Wrap and unwrap")
         XCTAssertTrue(wrap.waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["In Hammerlock"].exists, "moved clip keeps its tag under the original")
+        XCTAssertFalse(button(beginningWith: "Hammerlock exit").exists, "a clip filed in Hammerlock lives there, not here")
+        XCTAssertFalse(app.buttons["Cut clips from Thursday class"].exists, "a video with clips is archived, not listed")
         snap("02-folder")
 
         // Player
@@ -94,18 +94,22 @@ final class WalkthroughTests: XCTestCase {
         XCTAssertTrue(close.waitForExistence(timeout: 3) && close.isHittable)
         close.tap()
 
-        // Whole video from its thumbnail
-        let playWhole = app.buttons["Play whole video"].firstMatch
-        XCTAssertTrue(playWhole.waitForExistence(timeout: 5))
-        playWhole.tap()
+        // The full video, on demand from the clip's menu
+        wrap.press(forDuration: 1.0)
+        app.buttons["Play full video"].tap()
         XCTAssertTrue(app.buttons["Close player"].waitForExistence(timeout: 5))
-        XCTAssertFalse(app.buttons["Share clip"].exists, "whole videos have no clip buttons (favorite, learned, share)")
+        XCTAssertFalse(app.buttons["Add to favorites"].exists, "whole videos have no clip buttons (favorite, learned)")
         snap("04e-player-whole-video")
-        app.buttons["Close player"].tap()
+        app.closePlayer()
 
-        // Cut
-        let cut = app.buttons["Cut clips from this video"].firstMatch
+        // Cut more from the Full videos page
+        app.buttons["Back to Home"].firstMatch.tap()
+        let videosTile = button(beginningWith: "Videos")
+        XCTAssertTrue(videosTile.waitForExistence(timeout: 5), "back on Home")
+        videosTile.tap()
+        let cut = app.buttons["Cut clips from Thursday class"]
         XCTAssertTrue(cut.waitForExistence(timeout: 5))
+        snap("04f-full-videos")
         cut.tap()
         let markStart = app.buttons["Mark start"]
         XCTAssertTrue(markStart.waitForExistence(timeout: 5))
@@ -114,42 +118,53 @@ final class WalkthroughTests: XCTestCase {
         sleep(2)
         snap("06-cut-recording")
         button(beginningWith: "Mark end").tap()   // label also carries the live length
-        XCTAssertTrue(app.staticTexts["Clip 4"].waitForExistence(timeout: 3), "new clip appears in the tray")
+        XCTAssertTrue(app.descendants(matching: .any)["Clip 4"].firstMatch.waitForExistence(timeout: 3), "new clip appears in the tray")
         snap("07-cut-clip-added")
         // Name it straight away from the toast
-        let nameButton = app.buttons["Name"].firstMatch   // the folder behind Cut hosts the same toast
+        let nameButton = app.buttons["Name"].firstMatch   // the screen behind Cut hosts the same toast
         XCTAssertTrue(nameButton.waitForExistence(timeout: 3), "the clip-added toast offers Name")
         nameButton.tap()
         let trayField = app.textFields["Clip name"]
         XCTAssertTrue(trayField.waitForExistence(timeout: 3))
         trayField.typeText("Basic step\n")
-        XCTAssertTrue(app.staticTexts["Basic step"].waitForExistence(timeout: 3), "typing replaces the clip's name")
+        XCTAssertTrue(app.descendants(matching: .any)["Basic step"].firstMatch.waitForExistence(timeout: 3), "typing replaces the clip's name")
         app.buttons["Done"].tap()
+        // A new clip was made, so Done asks about the full video
+        let keepFull = app.buttons["Keep full video"]
+        XCTAssertTrue(keepFull.waitForExistence(timeout: 3), "Done asks whether to keep the full video")
+        snap("07b-keep-full-video")
+        keepFull.tap()
+        XCTAssertTrue(markStart.waitForNonExistence(timeout: 3))
 
-        // Drag a clip onto a subfolder card, then Undo
+        // The new clip lives in Turns with the others
+        app.buttons["Back to Home"].firstMatch.tap()
+        XCTAssertTrue(turns.waitForExistence(timeout: 5))
+        turns.tap()
+        XCTAssertTrue(button(beginningWith: "Basic step").waitForExistence(timeout: 5), "a clip lives where its video lives")
+
+        // Arrange, then drag a clip onto a subfolder card, then Undo
         XCTAssertTrue(wrap.waitForExistence(timeout: 5))
-        let hammerCard = button(beginningWith: "Hammerlock,")   // the card, not the "Hammerlock exit" row
+        app.buttons["Arrange: drag clips onto folders"].tap()
+        let hammerCard = button(beginningWith: "Hammerlock,")   // the folder card, not a clip
         XCTAssertTrue(hammerCard.waitForExistence(timeout: 3))
-        wrap.press(forDuration: 0.4, thenDragTo: hammerCard, withVelocity: .slow, thenHoldForDuration: 0.3)
+        wrap.press(forDuration: 0.6, thenDragTo: hammerCard, withVelocity: .slow, thenHoldForDuration: 0.3)
         XCTAssertTrue(app.staticTexts["Moved to Hammerlock"].waitForExistence(timeout: 3), "drop shows the Undo toast")
-        XCTAssertTrue(waitForCount(of: "In Hammerlock", toBe: 2), "dropped clip gains its tag")
+        XCTAssertTrue(wrap.waitForNonExistence(timeout: 3), "the dropped clip now lives in Hammerlock")
         snap("08-drag-moved")
         app.buttons["Undo"].tap()
-        XCTAssertTrue(waitForCount(of: "In Hammerlock", toBe: 1), "Undo puts the clip back with its video")
+        XCTAssertTrue(wrap.waitForExistence(timeout: 3), "Undo brings it back")
+        app.buttons["Done arranging"].tap()
 
-        // Move via long-press menu. Opening a context menu on a `.draggable` row keeps the app "animating"
-        // for XCUITest, so the next two steps each wait out the 60s idle timeout. The menu itself works.
-        XCTAssertTrue(wrap.waitForExistence(timeout: 5))
+        // Move via the long-press menu (outside Arrange, holding opens the menu)
         wrap.press(forDuration: 1.0)
-        app.buttons["Move"].tap()
+        app.buttons["Move to folder…"].tap()
         let footwork = app.buttons["Footwork"].firstMatch
         XCTAssertTrue(footwork.waitForExistence(timeout: 3))
         footwork.tap()
         snap("09-move-sheet")
         app.buttons["Move to Footwork"].tap()
-        sleep(2)
+        XCTAssertTrue(wrap.waitForNonExistence(timeout: 5), "moved clips leave this folder")
         snap("09b-after-move")
-        XCTAssertTrue(app.staticTexts["In Footwork"].waitForExistence(timeout: 3))
     }
 
     /// Hovering a subfolder card for 0.9s opens it with the clip still in hand; releasing files it there.
@@ -162,14 +177,14 @@ final class WalkthroughTests: XCTestCase {
             throw XCTSkip("No seed.mov in the app container; DemoSeed did nothing.")
         }
         turns.tap()
-        app.openClipDecks()
         let wrap = button(beginningWith: "Wrap and unwrap")
         XCTAssertTrue(wrap.waitForExistence(timeout: 5))
+        app.buttons["Arrange: drag clips onto folders"].tap()
         let hammerCard = button(beginningWith: "Hammerlock,")
-        wrap.press(forDuration: 0.4, thenDragTo: hammerCard, withVelocity: .slow, thenHoldForDuration: 1.6)
+        wrap.press(forDuration: 0.6, thenDragTo: hammerCard, withVelocity: .slow, thenHoldForDuration: 1.6)
         XCTAssertTrue(app.staticTexts["Moved to Hammerlock"].waitForExistence(timeout: 3))
         XCTAssertTrue(app.staticTexts["Hammerlock"].exists, "the hovered folder opened")
-        XCTAssertTrue(button(beginningWith: "Wrap and unwrap").exists, "the clip is now a loose clip here")
+        XCTAssertTrue(button(beginningWith: "Wrap and unwrap").exists, "the clip now lives here")
         snap("11-spring-loaded")
     }
 
@@ -183,12 +198,15 @@ final class WalkthroughTests: XCTestCase {
             throw XCTSkip("No seed.mov in the app container; DemoSeed did nothing.")
         }
         XCTAssertLessThan(turns.frame.minX, footwork.frame.minX, "seed puts Turns first")
+        // Arrange switches press-and-hold from the menu to dragging
+        app.buttons["Arrange folders"].firstMatch.tap()
+        XCTAssertTrue(app.buttons["Done arranging"].waitForExistence(timeout: 3))
         footwork.press(forDuration: 0.8, thenDragTo: turns, withVelocity: .slow, thenHoldForDuration: 0.5)
         snap("10-home-reordered")
         let moved = NSPredicate { _, _ in footwork.frame.minX < turns.frame.minX }
         wait(for: [expectation(for: moved, evaluatedWith: nil)], timeout: 3)
-        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label ENDSWITH %@", "folders")).firstMatch.exists,
-                      "subtitle is back to the clip count once the drag ends")
+        app.buttons["Done arranging"].tap()
+        XCTAssertFalse(app.staticTexts["Hold a folder, then drag it"].exists, "the arranging hint goes when arranging ends")
     }
 
     private func button(beginningWith prefix: String) -> XCUIElement {

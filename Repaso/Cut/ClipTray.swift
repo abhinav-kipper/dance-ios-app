@@ -13,30 +13,21 @@ struct ClipTray: View {
     @FocusState private var focused: Bool
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Text("Clips").sectionLabelStyle()
-                Text("\(clips.count)").font(Theme.mono(13)).foregroundStyle(Theme.textSecondary)
+        // No header or empty-state text: the tray simply appears once there's a clip to show.
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 10) {
+                ForEach(clips) { clip in
+                    card(clip)
+                        .transition(reduceMotion ? .opacity
+                            : .offset(y: 40).combined(with: .scale(scale: 0.6)).combined(with: .opacity))
+                }
             }
             .padding(.horizontal, Theme.gutter)
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 10) {
-                    ForEach(clips) { clip in
-                        card(clip)
-                            .transition(reduceMotion ? .opacity
-                                : .offset(y: 40).combined(with: .scale(scale: 0.6)).combined(with: .opacity))
-                    }
-                }
-                .padding(.horizontal, Theme.gutter)
-                .animation(reduceMotion ? .easeOut(duration: 0.2) : Theme.spring, value: clips.map(\.id))
-            }
-            if clips.isEmpty {
-                Text("Tap Mark start, then Mark end, to cut your first clip.")
-                    .font(.system(size: 13))
-                    .foregroundStyle(Theme.textSecondary)
-                    .padding(.horizontal, Theme.gutter)
-            }
+            .animation(reduceMotion ? .easeOut(duration: 0.2) : Theme.spring, value: clips.map(\.id))
         }
+        .opacity(clips.isEmpty ? 0 : 1)
+        .frame(height: clips.isEmpty ? 0 : nil)
+        .accessibilityLabel("Clips")
         .onChange(of: renameRequest) { _, id in
             guard let id, let clip = clips.first(where: { $0.id == id }) else { return }
             renameRequest = nil

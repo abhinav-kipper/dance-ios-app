@@ -28,12 +28,20 @@ final class ImportCoordinator {
         var assetID: String?
         var originalID: UUID?
         var recordedAt: Date?
+        /// This video's own name and tags; empty means "same as the batch" (tags) or "keep the date title" (name).
+        var ownTitle = ""
+        var ownInstructors = ""
+        var ownEvent = ""
+
+        var hasOwnDetails: Bool {
+            ![ownTitle, ownInstructors, ownEvent].allSatisfy { $0.trimmingCharacters(in: .whitespaces).isEmpty }
+        }
     }
 
     private(set) var items: [Item] = []
     private var runner: Task<Void, Never>?
 
-    /// Tag fields for the current batch; saved on every original it imports.
+    /// Tag fields for the current batch; saved on every original it imports that has no value of its own.
     var instructorsText = ""
     var eventText = ""
     /// Outcome line of the delete-from-Photos offer; nil until the user answers it.
@@ -84,6 +92,11 @@ final class ImportCoordinator {
         run(context: context, env: env)
     }
 
+    /// Edits one video's own name or tags (the import sheet's per-video fields).
+    func update(_ id: UUID, _ change: (inout Item) -> Void) {
+        if let i = items.firstIndex(where: { $0.id == id }) { change(&items[i]) }
+    }
+
     func retry(_ id: UUID, context: ModelContext, env: AppEnvironment) {
         guard let i = items.firstIndex(where: { $0.id == id }) else { return }
         items[i].state = .waiting
@@ -104,6 +117,7 @@ final class ImportCoordinator {
     private func process(at index: Int, context: ModelContext, env: AppEnvironment) async {
         let id = items[index].id
         let pick = items[index].pick
+        let item = items[index]
         // A folder deleted mid-import sends its videos to Unsorted instead.
         let target = items[index].target.flatMap { $0.isDeleted || $0.modelContext == nil ? nil : $0 }
         func update(_ change: (inout Item) -> Void) {
@@ -118,10 +132,13 @@ final class ImportCoordinator {
             update { $0.state = .copying(0.7) }
             let meta = try await VideoMetadata.load(transfer.url)
             let fileName = try env.videos.adopt(fileAt: transfer.url)
+            let current = items.first { $0.id == id } ?? item   // its own fields may have been typed meanwhile
+            let ownTitle = current.ownTitle.trimmingCharacters(in: .whitespacesAndNewlines)
             let original = try env.library(context).addOriginal(
-                title: Self.title(recordedAt: meta.recordedAt, fallback: "Imported video"),
+                title: ownTitle.isEmpty ? Self.title(recordedAt: meta.recordedAt, fallback: "Imported video") : ownTitle,
                 fileName: fileName, duration: meta.duration, recordedAt: meta.recordedAt, to: target,
-                instructors: TagText.instructors(from: instructorsText), event: eventText)
+                instructors: TagText.instructors(from: TagText.resolved(current.ownInstructors, shared: instructorsText)),
+                event: TagText.resolved(current.ownEvent, shared: eventText))
             update {
                 $0.originalID = original.id
                 $0.recordedAt = meta.recordedAt
@@ -169,14 +186,29 @@ final class ImportCoordinator {
         }, seconds: 5)
     }
 
-    /// Saves the tag fields on every original this batch has imported so far.
+    /// Saves names and tags on every original this batch has imported so far: each video's own values where it
+    /// has them, the batch's otherwise.
     func applyTags(context: ModelContext, env: AppEnvironment) {
-        let ids = Set(items.compactMap(\.originalID))
-        guard !ids.isEmpty else { return }
+        let imported = items.filter { $0.originalID != nil }
+        guard !imported.isEmpty else { return }
+        let ids = Set(imported.compactMap(\.originalID))
         let originals = ((try? context.fetch(FetchDescriptor<Original>())) ?? []).filter { ids.contains($0.id) }
-        let instructors = TagText.instructors(from: instructorsText)
-        let event = eventText
-        env.perform { try env.library(context).setTags(originals, instructors: instructors, event: event) }
+        let byID = Dictionary(originals.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let lib = env.library(context)
+        env.perform {
+            for item in imported {
+                guard let id = item.originalID, let original = byID[id] else { continue }
+                try lib.setTags([original],
+                                instructors: TagText.instructors(from: TagText.resolved(item.ownInstructors, shared: instructorsText)),
+                                event: TagText.resolved(item.ownEvent, shared: eventText))
+                if !item.ownTitle.trimmingCharacters(in: .whitespaces).isEmpty {
+                    try lib.renameOriginal(original, to: item.ownTitle)
+                }
+            }
+        }
+        for item in imported where !item.ownTitle.trimmingCharacters(in: .whitespaces).isEmpty {
+            update(item.id) { $0.name = $0.ownTitle.trimmingCharacters(in: .whitespaces) }
+        }
     }
 
     func keepInPhotos() { photosResult = PhotosCleanupText.kept }

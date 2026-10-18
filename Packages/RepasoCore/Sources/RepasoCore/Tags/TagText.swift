@@ -2,6 +2,12 @@ import Foundation
 
 /// Parsing for the import sheet's tag fields.
 public enum TagText {
+    /// A video's own value at import when it has one, otherwise the value shared by the whole batch.
+    public static func resolved(_ own: String?, shared: String) -> String {
+        guard let own, !own.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return shared }
+        return own
+    }
+
     /// Trims, drops empties, de-duplicates case-insensitively (first spelling wins).
     public static func normalized(_ values: [String]) -> [String] {
         var seen = Set<String>()

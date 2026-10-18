@@ -18,6 +18,8 @@ struct PlayerView: View {
     @State private var ringProgress: Double = 1
     @State private var deletingOriginal: Original?
     @State private var librarySheet: LibrarySheet?
+    @State private var cutting: CutRequest?
+    @State private var fullVideo: PlayerRequest?
     @State private var confirmingDelete = false
     @State private var sharing: Clip?
     @State private var index: Int
@@ -45,6 +47,8 @@ struct PlayerView: View {
     /// A pinch began during the current one-finger drag, so that drag must not swipe, scrub or pan.
     @State private var dragHadPinch = false
     @State private var isDragging = false
+    /// A swipe from the left edge: the Player follows the finger and closes like going back.
+    @State private var edgeDrag: CGFloat?
     @State private var videoSize = CGSize(width: 1, height: 1)
     @State private var resets = 0
     // Hold to seek
@@ -81,7 +85,7 @@ struct PlayerView: View {
                 flashOverlay
                 if let seconds = model.restingSeconds { restRing(seconds) }
             }
-            .offset(y: swipeOffset + entryOffset)
+            .offset(x: edgeDrag ?? 0, y: swipeOffset + entryOffset)
             .opacity(entryOpacity * (1 - min(abs(swipeOffset) / 260, 0.5)))
             VStack {
                 ZStack(alignment: .top) {
@@ -138,6 +142,10 @@ struct PlayerView: View {
         }
         .sheet(item: $sharing) { ShareSheet(clip: $0) }
         .sheet(item: $librarySheet) { $0.content }
+        .fullScreenCover(item: $cutting, onDismiss: { loadCurrentClip() }) {   // reload: the trim may have changed the range
+            CutView(original: $0.original, focusClipID: $0.focusClipID)
+        }
+        .fullScreenCover(item: $fullVideo) { PlayerView(request: $0) }
         .confirmationDialog("Delete this clip?", isPresented: $confirmingDelete, titleVisibility: .visible) {
             Button("Delete clip", role: .destructive, action: deleteCurrentClip)
         } message: {
@@ -495,7 +503,19 @@ struct PlayerView: View {
     private var moreMenu: some View {
         Menu {
             if let clip {
-                Button("Rename", systemImage: "pencil") { startRenaming() }
+                Button("Name & note…", systemImage: "pencil") { librarySheet = .info(clip) }
+                Button("Trim…", systemImage: "timeline.selection") {
+                    guard let original = clip.original else { return }
+                    model.pause()
+                    cutting = CutRequest(original: original, focusClipID: clip.id)
+                }
+                if let original = clip.original, !original.isClipSource {
+                    Button("Play full video", systemImage: "film") {
+                        model.pause()
+                        fullVideo = PlayerRequest(items: [.original(original)], index: 0, title: original.title)
+                    }
+                }
+                Divider()
                 Button("Move to folder…", systemImage: "folder") { librarySheet = .move(.clip(clip)) }
                 Button("Add to folders…", systemImage: "folder.badge.plus") { librarySheet = .link(.clip(clip)) }
                 Button("Share", systemImage: "square.and.arrow.up") {
@@ -505,6 +525,7 @@ struct PlayerView: View {
                 Divider()
                 Button("Delete clip", systemImage: "trash", role: .destructive) { confirmingDelete = true }
             } else if let original = item.original {
+                Button("Edit details…", systemImage: "pencil") { librarySheet = .videoInfo(original) }
                 Button("Move to folder…", systemImage: "folder") { librarySheet = .move(.original(original)) }
                 Button("Add to folders…", systemImage: "folder.badge.plus") { librarySheet = .link(.original(original)) }
                 Divider()
@@ -638,6 +659,11 @@ struct PlayerView: View {
                 isDragging = true
                 guard !isPinching, !dragHadPinch else { return }
                 let dx = value.translation.width, dy = value.translation.height
+                // From the left edge, a rightward swipe goes back, as everywhere else on iPhone.
+                if edgeDrag != nil || (gestureMode == nil && value.startLocation.x < 28 && dx > 10 && dx > abs(dy)) {
+                    edgeDrag = max(0, dx)
+                    return
+                }
                 if gestureMode == nil {
                     gestureMode = PlayerGesture.classify(dx: dx, dy: dy, isZoomed: framing.isZoomed, isPlaying: model.isPlaying)
                     if gestureMode == .pan { baseFraming = framing }
@@ -665,6 +691,15 @@ struct PlayerView: View {
                 if gestureMode != .scrub { wake() }
             }
             .onEnded { value in
+                if let edge = edgeDrag {
+                    isDragging = false
+                    if edge > 110 || value.predictedEndTranslation.width > 260 {
+                        dismiss()
+                    } else {
+                        withAnimation(Theme.motion(reduceMotion)) { edgeDrag = nil }
+                    }
+                    return
+                }
                 defer {
                     gestureMode = nil
                     stepped = 0

@@ -17,7 +17,6 @@ final class LinksAndSearchTests: XCTestCase {
 
         // Add "Double turn prep" to Footwork as well
         turns.tap()
-        app.openClipDecks()
         let prep = button(beginningWith: "Double turn prep")
         XCTAssertTrue(prep.waitForExistence(timeout: 5))
         prep.press(forDuration: 1.0)

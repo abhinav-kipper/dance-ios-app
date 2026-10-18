@@ -38,11 +38,10 @@ final class NavigationAndCutTests: XCTestCase {
 
         // Make a folder from the Move sheet and move a clip into it
         turns.tap()
-        app.openClipDecks()
         let prep = button(beginningWith: "Double turn prep")
         XCTAssertTrue(prep.waitForExistence(timeout: 5))
         prep.press(forDuration: 1.0)
-        app.buttons["Move"].tap()
+        app.buttons["Move to folder…"].tap()
         let newFolder = app.buttons["New folder"].firstMatch
         XCTAssertTrue(newFolder.waitForExistence(timeout: 3))
         newFolder.tap()
@@ -56,16 +55,18 @@ final class NavigationAndCutTests: XCTestCase {
         moveTo.tap()
         XCTAssertTrue(app.staticTexts["Moved to Spins"].firstMatch.waitForExistence(timeout: 4))
 
-        // Cut: scrolling the strip moves the video
-        let cut = app.buttons["Cut clips from this video"].firstMatch
-        XCTAssertTrue(cut.waitForExistence(timeout: 5))
-        cut.tap()
+        // Cut (via Trim… on a clip): scrolling the strip moves the video
+        let wrap = button(beginningWith: "Wrap and unwrap")
+        XCTAssertTrue(wrap.waitForExistence(timeout: 5))
+        wrap.press(forDuration: 1.0)
+        app.buttons["Trim…"].tap()
         let playhead = app.descendants(matching: .any)["Playhead"].firstMatch
         XCTAssertTrue(playhead.waitForExistence(timeout: 5))
         let before = playhead.value as? String
         let mid = playhead.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
-        mid.withOffset(CGVector(dx: 120, dy: 0))
-            .press(forDuration: 0.05, thenDragTo: mid.withOffset(CGVector(dx: -120, dy: 0)), withVelocity: .slow,
+        // Start between the selected clip's handles (at the playhead and ~130pt right), so it scrolls, not trims
+        mid.withOffset(CGVector(dx: 70, dy: 0))
+            .press(forDuration: 0.05, thenDragTo: mid.withOffset(CGVector(dx: -110, dy: 0)), withVelocity: .slow,
                    thenHoldForDuration: 0.3)
         XCTAssertTrue(waitForValue(of: playhead, toDifferFrom: before), "scrolling the strip moves the time")
         snap("17-cut-strip-scrolled")

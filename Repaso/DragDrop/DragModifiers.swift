@@ -7,6 +7,13 @@ extension View {
         modifier(DragSourceModifier(ref: ref, drag: drag, origin: origin, preview: preview()))
     }
 
+    /// `dragSource` only while `enabled` (Arrange mode); otherwise press-and-hold is left to the menu.
+    @ViewBuilder
+    func dragSource<P: View>(_ ref: DragRef, drag: DragState, origin: UUID?, enabled: Bool,
+                             @ViewBuilder preview: () -> P) -> some View {
+        if enabled { dragSource(ref, drag: drag, origin: origin, preview: preview) } else { self }
+    }
+
     /// Accepts Repaso drags. `perform` returns whether the drop was used; the drag ends either way.
     func dragTarget(_ drag: DragState, isTargeted: @escaping @MainActor (Bool) -> Void = { _ in },
                     perform: @escaping @MainActor (DragRef) -> Bool) -> some View {

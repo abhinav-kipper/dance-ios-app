@@ -54,7 +54,7 @@ struct FolderContentsTests {
         _ = try lib.addClip(to: o, start: 2, end: 3)
         try lib.moveClip(c1, to: turns)
         #expect(FolderContents.clipCount(in: turns) == 2)
-        #expect(FolderContents.clipCount(in: sub) == 2)
+        #expect(FolderContents.clipCount(in: sub) == 1, "c1 lives in Turns now, not under its video in Sub")
         let totals = try FolderContents.totals(ctx)
         #expect(totals.clips == 2 && totals.folders == 2)
     }
@@ -73,13 +73,13 @@ struct FolderContentsTests {
         #expect(q.map(\.id) == [a.id, l.id])
     }
 
-    @Test func mosaicPrefersClipsThenOriginals() throws {
+    @Test func mosaicPrefersClipsThenVideosToCut() throws {
         let turns = try lib.createFolder(named: "Turns", in: nil)
         let o = try lib.addOriginal(title: "Thu", fileName: "t.mov", duration: 60, recordedAt: nil, to: turns)
         let c = try lib.addClip(to: o, start: 0, end: 10)
+        let fresh = try lib.addOriginal(title: "Fri", fileName: "f.mov", duration: 60, recordedAt: nil, to: turns)
         let m = FolderContents.mosaic(for: turns)
-        #expect(m.first?.id == c.id)
-        #expect(m.count == 2)
+        #expect(m.map(\.id) == [c.id, fresh.id], "a video with clips is archived; one still to cut shows")
         let empty = try lib.createFolder(named: "Empty", in: nil)
         #expect(FolderContents.mosaic(for: empty).isEmpty)
     }

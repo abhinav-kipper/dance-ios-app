@@ -25,7 +25,6 @@ final class PlayerActionsTests: XCTestCase {
 
         // Rows have no play button any more; tapping the row plays
         turns.tap()
-        app.openClipDecks()
         let prep = button(beginningWith: "Double turn prep")
         XCTAssertTrue(prep.waitForExistence(timeout: 5))
         XCTAssertFalse(app.buttons["Play clip"].exists, "rows no longer carry a play button")
@@ -58,6 +57,28 @@ final class PlayerActionsTests: XCTestCase {
         confirm.tap()
         XCTAssertTrue(app.buttons["Close player"].waitForNonExistence(timeout: 4), "deleting closes the Player")
         XCTAssertTrue(prep.waitForNonExistence(timeout: 4), "and the clip is gone from the folder")
+    }
+
+    /// A swipe from the left edge closes the Player, like going back anywhere else.
+    func testEdgeSwipeClosesPlayer() throws {
+        continueAfterFailure = false
+        app.launchArguments = ["-uiTesting", "-seedDemo", "-noLivePreviews"]
+        app.launch()
+        let turns = button(beginningWith: "Turns")
+        guard turns.waitForExistence(timeout: 15) else {
+            throw XCTSkip("No seed.mov in the app container; DemoSeed did nothing.")
+        }
+        turns.tap()
+        let prep = button(beginningWith: "Double turn prep")
+        XCTAssertTrue(prep.waitForExistence(timeout: 5))
+        prep.tap()
+        let close = app.buttons["Close player"]
+        XCTAssertTrue(close.waitForExistence(timeout: 5))
+        let edge = app.coordinate(withNormalizedOffset: CGVector(dx: 0.02, dy: 0.45))
+        edge.press(forDuration: 0.05, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.8, dy: 0.45)),
+                   withVelocity: .fast, thenHoldForDuration: 0)
+        XCTAssertTrue(close.waitForNonExistence(timeout: 4), "the edge swipe closes the Player")
+        XCTAssertTrue(prep.exists, "back on the folder")
     }
 
     private func button(beginningWith prefix: String) -> XCUIElement {

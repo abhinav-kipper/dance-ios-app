@@ -16,16 +16,16 @@ struct SubfolderDropCard: View {
         let shape = RoundedRectangle(cornerRadius: 18, style: .continuous)
         FolderCard(folder: folder, compact: true, isEditingName: $isEditingName)
             .overlay {
-                if isHovered { shape.fill(Theme.accentTint).allowsHitTesting(false) }
+                if isHovered { shape.fill(Theme.roseTint).allowsHitTesting(false) }
             }
             .overlay {
                 if isHovered {
-                    shape.strokeBorder(Theme.accent, lineWidth: 1.5).allowsHitTesting(false)
+                    shape.strokeBorder(Theme.rose, lineWidth: 1.5).allowsHitTesting(false)
                 } else if isClipDragActive {
                     // A TimelineView rather than repeatForever: those can keep running after the drag ends,
                     // and then the app never goes idle.
                     TimelineView(.animation(paused: reduceMotion)) { context in
-                        shape.strokeBorder(Theme.accent.opacity(pulseOpacity(at: context.date)), lineWidth: 1.5)
+                        shape.strokeBorder(Theme.rose.opacity(pulseOpacity(at: context.date)), lineWidth: 1.5)
                     }
                     .allowsHitTesting(false)
                 }
@@ -64,11 +64,11 @@ struct SubfolderDropCard: View {
             Circle().fill(.black.opacity(0.55))
             Circle()
                 .trim(from: 0, to: ring)
-                .stroke(Theme.accent, style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
+                .stroke(Theme.rose, style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
                 .rotationEffect(.degrees(-90))
             Image(systemName: "folder.fill")
                 .font(.system(size: 10))
-                .foregroundStyle(Theme.accent)
+                .foregroundStyle(Theme.rose)
         }
         .frame(width: 26, height: 26)
         .accessibilityHidden(true)

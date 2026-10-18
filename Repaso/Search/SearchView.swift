@@ -16,6 +16,7 @@ struct SearchView: View {
     @State private var sheet: LibrarySheet?
     @State private var player: PlayerRequest?
     @State private var deletingClip: Clip?
+    @State private var cutting: CutRequest?
 
     private var results: LibrarySearch.Results {
         LibrarySearch.results(for: query, clips: allClips, videos: allVideos, folders: allFolders)
@@ -37,6 +38,7 @@ struct SearchView: View {
         .onAppear { fieldFocused = true }
         .sheet(item: $sheet) { $0.content }
         .fullScreenCover(item: $player) { PlayerView(request: $0) }
+        .fullScreenCover(item: $cutting) { CutView(original: $0.original, focusClipID: $0.focusClipID) }
         .confirmationDialog("Delete this clip?", isPresented: deleteBinding, titleVisibility: .visible,
                             presenting: deletingClip) { clip in
             Button("Delete “\(clip.name)”", role: .destructive) {
@@ -69,7 +71,7 @@ struct SearchView: View {
                 Image(systemName: "chevron.left").font(.system(size: 15, weight: .semibold))
                 Text("Home").font(.system(size: 15, weight: .semibold))
             }
-            .foregroundStyle(Theme.accent)
+            .foregroundStyle(Theme.rose)
             .frame(minHeight: 44)
             .contentShape([.interaction, .accessibility], Rectangle())
         }
@@ -187,7 +189,7 @@ struct SearchView: View {
         HStack(spacing: 12) {
             Image(systemName: "folder.fill")
                 .font(.system(size: 18))
-                .foregroundStyle(Theme.accent)
+                .foregroundStyle(Theme.rose)
                 .frame(width: 44, height: 44)
             VStack(alignment: .leading, spacing: 2) {
                 Text(folder.name)
@@ -239,6 +241,14 @@ struct SearchView: View {
             info: { sheet = .info($0) },
             delete: { deletingClip = $0 },
             share: { sheet = .share($0) },
-            link: { sheet = .link(.clip($0)) })
+            link: { sheet = .link(.clip($0)) },
+            trim: { clip in
+                guard let original = clip.original else { return }
+                cutting = CutRequest(original: original, focusClipID: clip.id)
+            },
+            playFull: { clip in
+                guard let original = clip.original else { return }
+                player = PlayerRequest(items: [.original(original)], index: 0, title: original.title)
+            })
     }
 }

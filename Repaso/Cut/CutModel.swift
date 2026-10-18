@@ -23,6 +23,10 @@ final class CutModel {
     private var tileCache: [String: CGImage] = [:]
     private var timeObserver: Any?
     private var scrubResume = false
+    /// Smooth scrubbing (Apple QA1820): one seek at a time, always to the newest target, so frames keep coming
+    /// while the finger moves instead of every seek cancelling the one before.
+    private var seekInFlight = false
+    private var pendingSeek: (time: Double, precise: Bool)?
 
     init(original: Original, videos: VideoStore) {
         duration = original.duration
@@ -40,7 +44,8 @@ final class CutModel {
         Task.detached(priority: .userInitiated) {
             try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback)
         }
-        timeObserver = player.addPeriodicTimeObserver(forInterval: CMTime(value: 1, timescale: 20), queue: .main) { [weak self] t in
+        // 60 Hz, so the strip glides with playback rather than stepping after it.
+        timeObserver = player.addPeriodicTimeObserver(forInterval: CMTime(value: 1, timescale: 60), queue: .main) { [weak self] t in
             let seconds = t.seconds
             MainActor.assumeIsolated { self?.tick(seconds) }
         }
@@ -62,15 +67,28 @@ final class CutModel {
         isPlaying = false
     }
 
-    func jump(_ delta: Double) { seek(time + delta) }
-
-    /// Precise seeks when settled; looser while dragging so the frame keeps up with the finger.
+    /// Moves to `t`. While dragging (`precise: false`) a frame's slack lets the decoder keep up; settling is exact.
     func seek(_ t: Double, precise: Bool = true) {
         guard t.isFinite else { return }
         let clamped = min(max(0, t), duration)
         time = clamped
-        let tolerance = precise ? CMTime.zero : CMTime(seconds: 0.1, preferredTimescale: 600)
-        player.seek(to: CMTime(seconds: clamped, preferredTimescale: 600), toleranceBefore: tolerance, toleranceAfter: tolerance)
+        pendingSeek = (clamped, precise)
+        if !seekInFlight { startNextSeek() }
+    }
+
+    private func startNextSeek() {
+        guard let next = pendingSeek else { return }
+        pendingSeek = nil
+        seekInFlight = true
+        let tolerance = next.precise ? CMTime.zero : CMTime(value: 1, timescale: 30)
+        player.seek(to: CMTime(seconds: next.time, preferredTimescale: 600),
+                    toleranceBefore: tolerance, toleranceAfter: tolerance) { [weak self] _ in
+            Task { @MainActor in
+                guard let self else { return }
+                self.seekInFlight = false
+                self.startNextSeek()
+            }
+        }
     }
 
     func beginScrub() {

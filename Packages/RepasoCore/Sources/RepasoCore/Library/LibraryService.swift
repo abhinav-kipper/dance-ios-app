@@ -176,10 +176,46 @@ public struct LibraryService {
         cleanup?([], [clip.id])   // poster is stale
     }
 
+    /// Title, note and tags of a video ("Edit details…"); a blank title keeps the old one.
+    public func updateDetails(_ original: Original, title: String, note: String, instructors: [String], event: String?) throws {
+        original.title = Self.cleanName(title) ?? original.title
+        original.note = Self.cleanNote(note)
+        original.instructors = TagText.normalized(instructors)
+        original.event = event.flatMap(Self.cleanName)
+        try save()
+    }
+
+    /// Gives a clip its own short video (`fileName`, already in the store, `duration` long), so its full video can be
+    /// deleted. The clip keeps its name, note, marks, links and the folder it shows in.
+    public func detach(_ clip: Clip, intoFile fileName: String, duration: Double) throws {
+        guard let old = clip.original else { return }
+        let source = Original(title: clip.name, fileName: fileName, duration: duration,
+                              recordedAt: old.recordedAt, folder: nil, importedAt: old.importedAt)
+        source.isClipSource = true
+        source.instructors = old.instructors
+        source.event = old.event
+        context.insert(source)
+        clip.folder = clip.effectiveFolder   // stays where it was shown
+        clip.original = source
+        clip.start = 0
+        clip.end = duration
+        try save()
+    }
+
+    /// Renames a video; a blank title keeps the old one.
+    public func renameOriginal(_ original: Original, to title: String) throws {
+        original.title = Self.cleanName(title) ?? original.title
+        try save()
+    }
+
+    static func cleanNote(_ note: String) -> String? {
+        let trimmed = note.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : String(trimmed.prefix(noteLimit))
+    }
+
     public func updateInfo(_ clip: Clip, name: String, note: String) throws {
         clip.name = Self.cleanName(name) ?? clip.name
-        let trimmed = note.trimmingCharacters(in: .whitespacesAndNewlines)
-        clip.note = trimmed.isEmpty ? nil : String(trimmed.prefix(Self.noteLimit))
+        clip.note = Self.cleanNote(note)
         try save()
     }
 

@@ -16,16 +16,17 @@ final class AccessibilityAuditTests: XCTestCase {
         try audit("Home")
 
         turns.tap()
-        app.openClipDecks()
         let wrap = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Wrap and unwrap")).firstMatch
         XCTAssertTrue(wrap.waitForExistence(timeout: 5))
         try audit("Folder")
 
         // Cut before the Player: Done closes Cut reliably, while the Player's close button fades with its controls.
-        let cut = app.buttons["Cut clips from this video"].firstMatch
-        XCTAssertTrue(cut.waitForExistence(timeout: 5))
-        cut.tap()
+        // Trim… opens the cutter with the clip selected (handles on screen too)
+        wrap.press(forDuration: 1.0)
+        app.buttons["Trim…"].tap()
         XCTAssertTrue(app.buttons["Mark start"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.descendants(matching: .any)["Clip start"].firstMatch.waitForExistence(timeout: 3),
+                      "the trimmed clip starts selected")
         try audit("Cut")
         app.buttons["Done"].tap()
 

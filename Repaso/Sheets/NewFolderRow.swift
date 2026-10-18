@@ -24,7 +24,7 @@ struct NewFolderRow: View {
                     .font(.system(size: 15, weight: .semibold))
                 Spacer()
             }
-            .foregroundStyle(Theme.accent)
+            .foregroundStyle(Theme.rose)
             .frame(minHeight: 44)
             .contentShape(Rectangle())
         }

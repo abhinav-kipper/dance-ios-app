@@ -44,6 +44,16 @@ public enum FolderContents {
         clip.effectiveFolder?.id != folder.id && clip.linkedFolders.contains { $0.id == folder.id }
     }
 
+    /// Unsorted is an inbox: under a video there it lists only the clips not yet filed in a folder.
+    public static func unfiledClips(of original: Original, sort: ClipSort, hideLearned: Bool) -> [Clip] {
+        sortClips(filter(original.clips.filter { $0.folder == nil }, hideLearned: hideLearned), by: sort)
+    }
+
+    /// How many of a video's clips are filed in folders ("2 filed in folders").
+    public static func filedCount(of original: Original) -> Int {
+        original.clips.filter { $0.folder != nil }.count
+    }
+
     /// All clips of an original, wherever they are filed.
     public static func clips(of original: Original, sort: ClipSort, hideLearned: Bool) -> [Clip] {
         sortClips(filter(original.clips, hideLearned: hideLearned), by: sort)
@@ -59,7 +69,61 @@ public enum FolderContents {
         originals.flatMap { clips(of: $0, sort: sort, hideLearned: hideLearned) } + loose
     }
 
-    /// Clips listed anywhere inside `folder` (recursively), each counted once.
+    // MARK: Clips first (folder screens)
+
+    /// The clips that live in `folder`, as its grid shows them: filed here, or unfiled with their video here;
+    /// then clips shown here through a link (their own, or their video's).
+    public static func folderClips(in folder: Folder, sort: ClipSort, hideLearned: Bool) -> [Clip] {
+        let home = folder.looseClips + folder.originals.flatMap { $0.clips.filter { $0.folder == nil } }
+        let homeIDs = Set(home.map(\.id))
+        var seen = homeIDs
+        let linked = (folder.linkedClips + folder.linkedOriginals.flatMap(\.clips)).filter { seen.insert($0.id).inserted }
+        return ordered(filter(home, hideLearned: hideLearned), by: sort)
+            + ordered(filter(linked, hideLearned: hideLearned), by: sort)
+    }
+
+    /// Unsorted's clips: unfiled clips of videos that have no folder.
+    public static func unsortedClips(of originals: [Original], sort: ClipSort, hideLearned: Bool) -> [Clip] {
+        let clips = originals.filter { $0.folder == nil }.flatMap { $0.clips.filter { $0.folder == nil } }
+        return ordered(filter(clips, hideLearned: hideLearned), by: sort)
+    }
+
+    /// Videos here with no clips yet: still waiting to be cut. A video with clips is archived (see `allVideos`).
+    public static func videosToCut(in folder: Folder, sort: ClipSort) -> [Original] {
+        var seen = Set<UUID>()
+        let videos = (folder.originals + folder.linkedOriginals).filter { seen.insert($0.id).inserted }
+        return sortOriginals(videos.filter { $0.clips.isEmpty && !$0.isClipSource }, by: sort)
+    }
+
+    public static func unsortedVideosToCut(_ originals: [Original], sort: ClipSort) -> [Original] {
+        sortOriginals(originals.filter { $0.folder == nil && $0.clips.isEmpty && !$0.isClipSource }, by: sort)
+    }
+
+    /// Every full video, newest first (clips' own short videos are left out).
+    public static func allVideos(_ originals: [Original]) -> [Original] {
+        originals.filter { !$0.isClipSource }.sorted { $0.importedAt > $1.importedAt }
+    }
+
+    /// True when `clip` shows in `folder` only through a link (its own or its video's).
+    public static func showsThroughLink(_ clip: Clip, in folder: Folder) -> Bool {
+        guard clip.effectiveFolder?.id != folder.id else { return false }
+        return clip.linkedFolders.contains { $0.id == folder.id }
+            || (clip.original?.linkedFolders.contains { $0.id == folder.id } ?? false)
+    }
+
+    /// Manual order groups clips by video (newest video first), then in the order they were cut.
+    static func ordered(_ clips: [Clip], by sort: ClipSort) -> [Clip] {
+        guard sort == .manual else { return sortClips(clips, by: sort) }
+        return clips.sorted { a, b in
+            let da = a.original.map { $0.recordedAt ?? $0.importedAt } ?? .distantPast
+            let db = b.original.map { $0.recordedAt ?? $0.importedAt } ?? .distantPast
+            if da != db { return da > db }
+            if a.original?.id != b.original?.id { return (a.original?.id.uuidString ?? "") < (b.original?.id.uuidString ?? "") }
+            return (a.sortIndex, a.addedAt) < (b.sortIndex, b.addedAt)
+        }
+    }
+
+    /// Clips shown anywhere inside `folder` (recursively), each counted once.
     public static func clipCount(in folder: Folder) -> Int {
         var ids = Set<UUID>()
         collectClipIDs(folder, into: &ids)
@@ -67,21 +131,18 @@ public enum FolderContents {
     }
 
     private static func collectClipIDs(_ folder: Folder, into ids: inout Set<UUID>) {
-        for o in folder.originals + folder.linkedOriginals { o.clips.forEach { ids.insert($0.id) } }
-        (folder.looseClips + folder.linkedClips).forEach { ids.insert($0.id) }
+        folderClips(in: folder, sort: .dateAdded, hideLearned: false).forEach { ids.insert($0.id) }
         folder.children.forEach { collectClipIDs($0, into: &ids) }
     }
 
-    /// Up to `limit` posters: clips first (newest first), then originals, recursing into subfolders.
+    /// Up to `limit` posters: clips first (newest first), then videos waiting to be cut, recursing into subfolders.
     public static func mosaic(for folder: Folder, limit: Int = 4) -> [ThumbnailRequest] {
         var out: [ThumbnailRequest] = []
         var queue: [Folder] = [folder]
         while !queue.isEmpty, out.count < limit {
             let f = queue.removeFirst()
-            let videos = f.originals + f.linkedOriginals
-            let clips = (videos.flatMap(\.clips) + f.looseClips + f.linkedClips).sorted { $0.addedAt > $1.addedAt }
-            out += clips.compactMap(\.thumbnailRequest)
-            out += videos.map(\.thumbnailRequest)
+            out += folderClips(in: f, sort: .dateAdded, hideLearned: false).compactMap(\.thumbnailRequest)
+            out += videosToCut(in: f, sort: .manual).map(\.thumbnailRequest)
             queue += subfolders(of: f)
         }
         var seen = Set<UUID>()

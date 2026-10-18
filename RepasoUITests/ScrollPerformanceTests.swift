@@ -13,7 +13,6 @@ final class ScrollPerformanceTests: XCTestCase {
             throw XCTSkip("No seed.mov in the app container; DemoSeed did nothing.")
         }
         practice.tap()
-        app.openClipDecks()
         let list = app.scrollViews.firstMatch
         XCTAssertTrue(list.waitForExistence(timeout: 5))
 

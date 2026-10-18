@@ -5,4 +5,5 @@ enum Route: Hashable {
     case unsorted
     case favorites
     case search
+    case videos
 }

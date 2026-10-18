@@ -183,10 +183,10 @@ struct LinkBadge: View {
     var body: some View {
         Label("Linked", systemImage: "link")
             .font(.system(size: 11, weight: .semibold))
-            .foregroundStyle(Theme.accent)
+            .foregroundStyle(Theme.rose)
             .padding(.horizontal, 7)
             .padding(.vertical, 2)
-            .background(Theme.accentTint, in: Capsule())
+            .background(Theme.roseTint, in: Capsule())
             .lineLimit(1)
             .fixedSize()
             .accessibilityLabel("Linked here; home is \(home)")

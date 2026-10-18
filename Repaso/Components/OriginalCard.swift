@@ -12,6 +12,11 @@ struct OriginalCard: View {
     let onMove: () -> Void
     let onDelete: () -> Void
     var onLink: () -> Void = {}
+    var onEdit: () -> Void = {}
+    /// In Unsorted: clips of this video already filed in folders (they aren't listed here).
+    var filedElsewhere = 0
+    /// Full videos page: the meta line says where the video lives.
+    var showsLocation = false
     /// Set when the video shows in this folder through a link: the name of its home.
     var linkedHome: String?
     /// "Remove from <folder>" for a linked video.
@@ -61,7 +66,10 @@ struct OriginalCard: View {
 
     /// "Workshop · 3 clips" when the import tagged an event.
     private var meta: String {
-        let count = original.clips.count == 1 ? "1 clip" : "\(original.clips.count) clips"
+        let here = original.clips.count - filedElsewhere   // counts learned clips too, even when hidden
+        var count = here == 1 ? "1 clip" : "\(here) clips"
+        if filedElsewhere > 0 { count += " · \(filedElsewhere) filed in folders" }
+        if showsLocation { count += " · in \(original.folder?.name ?? "Unsorted")" }
         return original.event.map { "\($0) · \(count)" } ?? count
     }
 
@@ -98,6 +106,12 @@ struct OriginalCard: View {
                 Text(meta)
                     .font(.system(size: 13))
                     .foregroundStyle(Theme.textSecondary)
+                if let note = original.note {
+                    Text(note)
+                        .font(.system(size: 13))
+                        .foregroundStyle(Theme.textPrimary.opacity(0.85))
+                        .lineLimit(2)
+                }
                 if let linkedHome { LinkBadge(home: linkedHome) }
             }
             Spacer(minLength: 0)
@@ -113,7 +127,7 @@ struct OriginalCard: View {
                     .frame(minHeight: 44)
             }
             .buttonStyle(PressableButtonStyle())
-            .accessibilityLabel("Cut clips from this video")
+            .accessibilityLabel("Cut clips from \(original.title)")
             if !clips.isEmpty {
                 Button {
                     setExpanded(!expanded)
@@ -133,6 +147,7 @@ struct OriginalCard: View {
         .contentShape(Rectangle())
         .contextMenu {
             Button("Play whole video", systemImage: "play", action: onPlay)
+            Button("Edit details…", systemImage: "pencil", action: onEdit)
             Button("Move video", systemImage: "folder", action: onMove)
             Button("Add to folders…", systemImage: "folder.badge.plus", action: onLink)
             if linkedHome != nil, let onUnlink {

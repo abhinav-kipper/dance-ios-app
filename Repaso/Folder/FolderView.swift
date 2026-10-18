@@ -3,7 +3,8 @@ import SwiftData
 import PhotosUI
 import RepasoCore
 
-/// A folder (or Unsorted when `folderID == nil`): subfolders, originals with their clips, loose clips.
+/// A folder (or Unsorted when `folderID == nil`): subfolders, videos still to cut, and its clips as preview cards.
+/// A video with clips is archived (Full videos on Home); its clips live here.
 struct FolderView: View {
     let folderID: UUID?
     @Binding var path: [Route]
@@ -19,7 +20,9 @@ struct FolderView: View {
 
     @State private var sheet: LibrarySheet?
     @State private var player: PlayerRequest?
-    @State private var cutting: Original?
+    @State private var cutting: CutRequest?
+    /// Arrange mode: press-and-hold drags clips onto folders instead of opening their menu.
+    @State private var arranging = false
     @State private var deletingClip: Clip?
     @State private var picks: [PhotosPickerItem] = []
     @State private var showPicker = false
@@ -45,14 +48,15 @@ struct FolderView: View {
     private var sort: ClipSort { ClipSort(rawValue: sortRaw) ?? .manual }
     private var title: String { folder?.name ?? "Unsorted" }
 
-    private var originals: [Original] {
-        if let folder { return FolderContents.originals(in: folder, sort: sort) }
-        return FolderContents.sortOriginals(unsortedOriginals, by: sort)
+    /// Videos here with no clips yet.
+    private var toCut: [Original] {
+        if let folder { return FolderContents.videosToCut(in: folder, sort: sort) }
+        return FolderContents.unsortedVideosToCut(unsortedOriginals, sort: sort)
     }
 
-    private var looseClips: [Clip] {
-        guard let folder else { return [] }
-        return FolderContents.looseClips(in: folder, sort: sort, hideLearned: hideLearned)
+    private var clips: [Clip] {
+        if let folder { return FolderContents.folderClips(in: folder, sort: sort, hideLearned: hideLearned) }
+        return FolderContents.unsortedClips(of: unsortedOriginals, sort: sort, hideLearned: hideLearned)
     }
 
     private var subfolders: [Folder] {
@@ -63,10 +67,10 @@ struct FolderView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
                 header
-                chips
                 if folder != nil { subfolderSection }
-                originalsSection
-                if !looseClips.isEmpty { looseSection }
+                toCutSection
+                if !clips.isEmpty { chips }   // they act on the clips, so they sit right above them
+                clipsSection
             }
             .padding(.horizontal, Theme.gutter)
             .padding(.bottom, 140)
@@ -95,7 +99,7 @@ struct FolderView: View {
             }
         }
         .toolbar(.hidden, for: .navigationBar)
-        .photosPicker(isPresented: $showPicker, selection: $picks, matching: .videos,
+        .photosPicker(isPresented: $showPicker, selection: $picks, matching: .importableVideos,
                          preferredItemEncoding: .current, photoLibrary: .shared())
         .onChange(of: picks) { _, new in
             guard !new.isEmpty else { return }
@@ -103,13 +107,14 @@ struct FolderView: View {
             picks = []
             showImport = true
         }
+        .onChange(of: clips.isEmpty) { _, empty in if empty { arranging = false } }
         .onChange(of: matches.isEmpty) { _, gone in
             if gone && folderID != nil { dismiss() }   // folder deleted while open
         }
         .sheet(isPresented: $showImport) { ImportSheet() }
         .sheet(item: $sheet) { $0.content }
         .fullScreenCover(item: $player) { PlayerView(request: $0) }
-        .fullScreenCover(item: $cutting) { CutView(original: $0) }
+        .fullScreenCover(item: $cutting) { CutView(original: $0.original, focusClipID: $0.focusClipID) }
         .confirmationDialog("Delete this clip?", isPresented: deleteClipBinding, titleVisibility: .visible, presenting: deletingClip) { clip in
             Button("Delete “\(clip.name)”", role: .destructive) {
                 env.perform { try env.library(ctx).deleteClip(clip) }
@@ -138,7 +143,7 @@ struct FolderView: View {
                     Image(systemName: "chevron.left").font(.system(size: 15, weight: .semibold))
                     Text(folder?.parent?.name ?? "Home").font(.system(size: 15, weight: .semibold))
                 }
-                .foregroundStyle(Theme.accent)
+                .foregroundStyle(Theme.rose)
                 .frame(minHeight: 44)
                 .contentShape([.interaction, .accessibility], Rectangle())
             } primaryAction: {
@@ -158,18 +163,7 @@ struct FolderView: View {
             Text(title)
                 .font(.system(size: 34, weight: .bold))
                 .foregroundStyle(Theme.textPrimary)
-            Text(summary)
-                .font(.system(size: 15))
-                .foregroundStyle(Theme.textSecondary)
         }
-    }
-
-    private var summary: String {
-        let clipCount = folder.map(FolderContents.clipCount(in:)) ?? unsortedOriginals.reduce(0) { $0 + $1.clips.count }
-        var parts = [clipCount == 1 ? "1 clip" : "\(clipCount) clips",
-                     originals.count == 1 ? "1 original" : "\(originals.count) originals"]
-        if folder != nil { parts.append(subfolders.count == 1 ? "1 folder" : "\(subfolders.count) folders") }
-        return parts.joined(separator: " · ")
     }
 
     private var chips: some View {
@@ -189,6 +183,16 @@ struct FolderView: View {
             }
             .buttonStyle(PressableButtonStyle())
             .accessibilityAddTraits(hideLearned ? .isSelected : [])
+            if !clips.isEmpty {
+                Button {
+                    withAnimation(Theme.spring) { arranging.toggle() }
+                } label: {
+                    Chip(title: arranging ? "Done" : "Arrange", systemImage: arranging ? "checkmark" : "hand.draw",
+                         isOn: arranging)
+                }
+                .buttonStyle(PressableButtonStyle())
+                .accessibilityLabel(arranging ? "Done arranging" : "Arrange: drag clips onto folders")
+            }
         }
     }
 
@@ -196,7 +200,7 @@ struct FolderView: View {
         VStack(alignment: .leading, spacing: 12) {
             Group {
                 if isClipDragActive {
-                    Text("Drop on a folder").sectionLabelStyle(Theme.accent)
+                    Text("Drop on a folder").sectionLabelStyle(Theme.rose)
                 } else {
                     Text("Folders").sectionLabelStyle()
                 }
@@ -241,51 +245,60 @@ struct FolderView: View {
     }
 
     @ViewBuilder
-    private var originalsSection: some View {
-        if !originals.isEmpty {
+    private var toCutSection: some View {
+        if !toCut.isEmpty {
             VStack(alignment: .leading, spacing: 12) {
-                Text("Originals").sectionLabelStyle()
-                ForEach(Array(originals.enumerated()), id: \.element.id) { i, original in
+                Text("To cut").sectionLabelStyle()
+                ForEach(Array(toCut.enumerated()), id: \.element.id) { i, original in
                     OriginalCard(
                         original: original,
-                        clips: FolderContents.clips(of: original, sort: sort, hideLearned: hideLearned),
+                        clips: [],
                         actions: clipActions,
                         onPlay: { playOriginal(original) },
-                        onCut: { cutting = original },
+                        onCut: { cutting = CutRequest(original: original) },
                         onMove: { sheet = .move(.original(original)) },
                         onDelete: { sheet = .deleteOriginal(original) },
                         onLink: { sheet = .link(.original(original)) },
+                        onEdit: { sheet = .videoInfo(original) },
                         linkedHome: linkedHome(of: original),
                         onUnlink: { unlink(original) },
-                        folderName: folder?.name,
-                        isDraggable: folder != nil,
-                        dragOrigin: folderID)
+                        folderName: folder?.name)
                     .riseIn(i)
                 }
             }
-        } else if folder == nil || (subfolders.isEmpty && looseClips.isEmpty) {
-            Text("No videos here yet. Tap Import to add some.")
-                .font(.system(size: 15))
-                .foregroundStyle(Theme.textSecondary)
-                .padding(.top, 8)
         }
     }
 
-    private var looseSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Loose clips").sectionLabelStyle()
-            VStack(spacing: 0) {
-                ForEach(Array(looseClips.enumerated()), id: \.element.id) { i, clip in
-                    ClipRow(clip: clip, context: .loose, actions: clipActions, isDraggable: true, dragOrigin: folderID,
-                            linkedHome: linkedHome(of: clip))
-                        .padding(.horizontal, 12)
-                        .riseIn(i)
-                        .transition(.asymmetric(insertion: .opacity, removal: .move(edge: .trailing).combined(with: .opacity)))
+    @ViewBuilder
+    private var clipsSection: some View {
+        if !clips.isEmpty {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    Text("Clips").sectionLabelStyle()
+                    Spacer()
+                    if arranging {
+                        Text("Hold a clip, then drag it onto a folder")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(Theme.rose)
+                            .transition(.opacity)
+                    }
                 }
+                LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)], spacing: 12) {
+                    ForEach(Array(clips.enumerated()), id: \.element.id) { i, clip in
+                        ClipCard(clip: clip, actions: clipActions, isArranging: arranging, dragOrigin: folderID,
+                                 linkedHome: linkedHome(of: clip))
+                            .riseIn(i)
+                            .transition(.asymmetric(insertion: .opacity, removal: .scale(scale: 0.6).combined(with: .opacity)))
+                    }
+                }
+                .animation(Theme.spring, value: clips.map(\.id))
             }
-            .padding(.vertical, 4)
-            .cardGlass(radius: Theme.Radius.listCard)
-            .animation(Theme.spring, value: looseClips.map(\.id))
+        } else if toCut.isEmpty && (folder == nil || subfolders.isEmpty) {
+            Text(folder == nil ? "Nothing new. Imported videos wait here until you cut them."
+                 : "No clips here yet. Tap Import, or move clips here.")
+                .font(.system(size: 15))
+                .foregroundStyle(Theme.textSecondary)
+                .padding(.top, 8)
         }
     }
 
@@ -294,7 +307,7 @@ struct FolderView: View {
     private var clipActions: ClipActions {
         ClipActions(
             play: { clip in
-                let queue = FolderContents.playQueue(originals: originals, loose: looseClips, sort: sort, hideLearned: hideLearned)
+                let queue = clips
                 let all = queue.contains { $0.id == clip.id } ? queue : [clip] + queue
                 player = PlayerRequest(queue: all, index: all.firstIndex { $0.id == clip.id } ?? 0, title: title)
             },
@@ -304,7 +317,16 @@ struct FolderView: View {
             share: { sheet = .share($0) },
             link: { sheet = .link(.clip($0)) },
             unlink: folder == nil ? nil : { unlink($0) },
-            folderName: folder?.name)
+            folderName: folder?.name,
+            trim: { clip in
+                guard let original = clip.original else { return }
+                cutting = CutRequest(original: original, focusClipID: clip.id)
+            },
+            playFull: { clip in
+                guard let original = clip.original else { return }
+                player = PlayerRequest(items: [.original(original)], index: 0, title: original.title)
+            },
+            arrange: subfolders.isEmpty ? nil : { withAnimation(Theme.spring) { arranging = true } })
     }
 
     // MARK: Links
@@ -316,7 +338,7 @@ struct FolderView: View {
     }
 
     private func linkedHome(of clip: Clip) -> String? {
-        guard let folder, FolderContents.isLinked(clip, in: folder) else { return nil }
+        guard let folder, FolderContents.showsThroughLink(clip, in: folder) else { return nil }
         return clip.effectiveFolder?.name ?? "Unsorted"
     }
 
@@ -342,8 +364,8 @@ struct FolderView: View {
 
     /// Plays the whole video; swiping moves between this folder's videos.
     private func playOriginal(_ original: Original) {
-        let items = originals.map(PlaybackItem.original)
-        player = PlayerRequest(items: items, index: originals.firstIndex { $0.id == original.id } ?? 0, title: title)
+        let items = toCut.map(PlaybackItem.original)
+        player = PlayerRequest(items: items, index: toCut.firstIndex { $0.id == original.id } ?? 0, title: title)
     }
 
         private var deleteClipBinding: Binding<Bool> {
@@ -377,7 +399,7 @@ struct FolderView: View {
                 .foregroundStyle(Theme.onAccent)
                 .padding(.horizontal, 18)
                 .frame(height: 44)
-                .background(Theme.accent, in: Capsule())
+                .background(Theme.rose, in: Capsule())
                 .padding(.top, 8)
                 .transition(.move(edge: .top).combined(with: .opacity))
                 .allowsHitTesting(false)
@@ -446,6 +468,7 @@ struct FavoritesView: View {
     @State private var sheet: LibrarySheet?
     @State private var player: PlayerRequest?
     @State private var deletingClip: Clip?
+    @State private var cutting: CutRequest?
 
     private var clips: [Clip] {
         FolderContents.sortClips(favorites.filter { $0.original != nil }, by: ClipSort(rawValue: sortRaw) ?? .manual)
@@ -459,7 +482,7 @@ struct FavoritesView: View {
                         Image(systemName: "chevron.left").font(.system(size: 15, weight: .semibold))
                         Text("Home").font(.system(size: 15, weight: .semibold))
                     }
-                    .foregroundStyle(Theme.accent)
+                    .foregroundStyle(Theme.rose)
                     .frame(minHeight: 44)
                     .contentShape([.interaction, .accessibility], Rectangle())
                 }
@@ -480,15 +503,12 @@ struct FavoritesView: View {
                         .font(.system(size: 15))
                         .foregroundStyle(Theme.textSecondary)
                 } else {
-                    VStack(spacing: 0) {
+                    LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)], spacing: 12) {
                         ForEach(Array(clips.enumerated()), id: \.element.id) { i, clip in
-                            ClipRow(clip: clip, context: .loose, actions: actions)
-                                .padding(.horizontal, 12)
+                            ClipCard(clip: clip, actions: actions)
                                 .riseIn(i)
                         }
                     }
-                    .padding(.vertical, 4)
-                    .cardGlass(radius: Theme.Radius.listCard)
                     .animation(Theme.spring, value: clips.map(\.id))
                 }
             }
@@ -502,6 +522,7 @@ struct FavoritesView: View {
         .toolbar(.hidden, for: .navigationBar)
         .sheet(item: $sheet) { $0.content }
         .fullScreenCover(item: $player) { PlayerView(request: $0) }
+        .fullScreenCover(item: $cutting) { CutView(original: $0.original, focusClipID: $0.focusClipID) }
         .confirmationDialog("Delete this clip?", isPresented: Binding(get: { deletingClip != nil }, set: { if !$0 { deletingClip = nil } }),
                             titleVisibility: .visible, presenting: deletingClip) { clip in
             Button("Delete “\(clip.name)”", role: .destructive) {
@@ -520,6 +541,14 @@ struct FavoritesView: View {
             info: { sheet = .info($0) },
             delete: { deletingClip = $0 },
             share: { sheet = .share($0) },
-            link: { sheet = .link(.clip($0)) })
+            link: { sheet = .link(.clip($0)) },
+            trim: { clip in
+                guard let original = clip.original else { return }
+                cutting = CutRequest(original: original, focusClipID: clip.id)
+            },
+            playFull: { clip in
+                guard let original = clip.original else { return }
+                player = PlayerRequest(items: [.original(original)], index: 0, title: original.title)
+            })
     }
 }
