@@ -154,9 +154,9 @@ struct LibraryServiceTests {
 
     @Test func infoTrimsAndCapsNote() throws {
         let c = try lib.addClip(to: try original(), start: 0, end: 1)
-        try lib.updateInfo(c, name: "  ", note: String(repeating: "a", count: 200))
+        try lib.updateInfo(c, name: "  ", note: String(repeating: "a", count: LibraryService.noteLimit + 60))
         #expect(c.name == "Clip 1")
-        #expect(c.note?.count == 140)
+        #expect(c.note?.count == LibraryService.noteLimit)
         try lib.updateInfo(c, name: "Hammerlock", note: "   ")
         #expect(c.name == "Hammerlock")
         #expect(c.note == nil)

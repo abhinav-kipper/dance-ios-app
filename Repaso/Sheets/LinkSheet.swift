@@ -2,7 +2,7 @@ import SwiftUI
 import SwiftData
 import RepasoCore
 
-/// What "Add to folders…" is for: a clip or a whole video.
+/// What "Folders…" is for: a clip or a whole video.
 enum LinkSubject: Identifiable {
     case clip(Clip)
     case original(Original)
@@ -14,14 +14,9 @@ enum LinkSubject: Identifiable {
         }
     }
 
-    var title: String {
-        switch self {
-        case .clip: "Add clip to folders"
-        case .original: "Add video to folders"
-        }
-    }
+    var title: String { "Folders" }
 
-    /// Where it lives; shown checked and fixed.
+    /// Where it lives now (the first ticked folder keeps or takes this role).
     var home: Folder? {
         switch self {
         case .clip(let c): c.effectiveFolder
@@ -37,7 +32,8 @@ enum LinkSubject: Identifiable {
     }
 }
 
-/// Folder tree with checkboxes: the item also shows in every ticked folder (like adding a song to playlists).
+/// "Folders…": a folder tree with checkboxes, ticked wherever the item shows. One place for moving it and for showing
+/// it in more folders (like a song in playlists): it lives in the first ticked folder and also appears in the rest.
 struct LinkSheet: View {
     let subject: LinkSubject
     @Environment(\.modelContext) private var ctx
@@ -59,7 +55,7 @@ struct LinkSheet: View {
                 Text(subject.title)
                     .font(.system(size: 22, weight: .bold))
                     .foregroundStyle(Theme.textPrimary)
-                Text("It stays in its home folder and also shows in the ones you tick.")
+                Text(subject.isClip ? "Tick every folder this clip should show in." : "Tick every folder this video should show in.")
                     .font(.system(size: 13))
                     .foregroundStyle(Theme.textSecondary)
             }
@@ -78,7 +74,7 @@ struct LinkSheet: View {
         .padding(.horizontal, Theme.gutter)
         .repasoSheet()
         .onAppear {
-            selected = Set(subject.linked.map(\.id))
+            selected = Set((subject.linked + [subject.home].compactMap { $0 }).map(\.id))
             expanded = Set(roots.map(\.id))
             // Open the path down to every ticked folder and the home.
             for folder in subject.linked + [subject.home].compactMap({ $0 }) {
@@ -101,8 +97,7 @@ struct LinkSheet: View {
 
     private func folderRow(_ row: Row) -> some View {
         let f = row.folder
-        let isHome = subject.home?.id == f.id
-        let ticked = isHome || selected.contains(f.id)
+        let ticked = selected.contains(f.id)
         return HStack(spacing: 10) {
             if !f.children.isEmpty {
                 Button {
@@ -133,46 +128,58 @@ struct LinkSheet: View {
                         .foregroundStyle(Theme.textPrimary)
                         .lineLimit(1)
                     Spacer()
-                    if isHome {
-                        Text("Home").font(.system(size: 13)).foregroundStyle(Theme.textSecondary)
-                    }
                 }
                 .frame(minHeight: 44)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .disabled(isHome)
             .accessibilityLabel(f.name)
-            .accessibilityValue(isHome ? "Home folder" : (ticked ? "Added" : "Not added"))
+            .accessibilityValue(ticked ? "Shown here" : "Not here")
         }
         .padding(.leading, CGFloat(row.depth) * 22)
         .padding(.horizontal, 8)
     }
 
     private func save() {
-        let folders = try? ctx.fetch(FetchDescriptor<Folder>())
-        let chosen = (folders ?? []).filter { selected.contains($0.id) }
-        let before = subject.linked
-        let lib = env.library(ctx)
-        env.perform {
-            switch subject {
-            case .clip(let c): try lib.setLinks(c, to: chosen)
-            case .original(let o): try lib.setLinks(o, to: chosen)
-            }
-        }
+        let all = (try? ctx.fetch(FetchDescriptor<Folder>())) ?? []
+        let byID = Dictionary(all.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        // Tree order, so "the first ticked folder" is the one highest in the list.
+        let chosen = rows.map(\.folder).filter { selected.contains($0.id) }
+            + selected.subtracting(rows.map(\.folder.id)).compactMap { byID[$0] }
+        let before = (subject.home.map { [$0] } ?? []) + subject.linked
+        let beforeIDs = Set(before.map(\.id))
         dismiss()
-        let count = subject.linked.count
-        guard count != before.count || Set(before.map(\.id)) != Set(subject.linked.map(\.id)) else { return }
+        guard Set(chosen.map(\.id)) != beforeIDs else { return }
+        let lib = env.library(ctx)
         let subject = subject
+        env.perform { try Self.place(subject, lib, in: chosen) }
         let env = env
-        env.showToast(count == 0 ? "Only in its home folder" : (count == 1 ? "Also in 1 folder" : "Also in \(count) folders")) {
-            env.perform {
-                switch subject {
-                case .clip(let c): try lib.setLinks(c, to: before)
-                case .original(let o): try lib.setLinks(o, to: before)
-                }
-            }
+        env.showToast(Self.summary(subject, chosen: chosen)) {
+            env.perform { try Self.place(subject, lib, in: before) }
         }
+    }
+
+    private static func place(_ subject: LinkSubject, _ lib: LibraryService, in folders: [Folder]) throws {
+        switch subject {
+        case .clip(let c): try lib.place(c, in: folders)
+        case .original(let o): try lib.place(o, in: folders)
+        }
+    }
+
+    /// "In Turns", "In Turns and 2 more", or where it went when nothing is ticked.
+    private static func summary(_ subject: LinkSubject, chosen: [Folder]) -> String {
+        guard let first = subject.home ?? chosen.first else {
+            return subject.isClip ? "Back with its video" : "Moved to Unsorted"
+        }
+        let others = (chosen.count) - 1
+        return others > 0 ? "In \(first.name) and \(others) more" : "In \(first.name)"
+    }
+}
+
+extension LinkSubject {
+    var isClip: Bool {
+        if case .clip = self { return true }
+        return false
     }
 }
 

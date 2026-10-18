@@ -8,7 +8,8 @@ public enum FolderDeleteMode: Sendable { case deleteContents, moveContentsUp }
 @MainActor
 public struct LibraryService {
     public typealias FileCleanup = @MainActor (_ fileNames: [String], _ thumbnailIDs: [UUID]) -> Void
-    public static let noteLimit = 140
+    /// Notes are a notebook page, not a caption: room for counts, hand placement, how it should feel.
+    public static let noteLimit = 1000
     public static let defaultFolderName = "New folder"
 
     public let context: ModelContext
@@ -253,6 +254,49 @@ public struct LibraryService {
     // MARK: Links (also shown in other folders)
 
     /// Replaces the folders a video also shows in. Its home and duplicates are dropped.
+    // MARK: Folders… (one place to say where something shows)
+
+    /// The clip shows in exactly `folders`: it keeps living where it is if that's still ticked, otherwise it moves to
+    /// the first one, and shows in the rest through links. Nothing ticked: it goes back with its video.
+    public func place(_ clip: Clip, in folders: [Folder]) throws {
+        let ids = Set(folders.map(\.id))
+        if folders.isEmpty {
+            clip.folder = nil
+        } else if let home = clip.effectiveFolder, ids.contains(home.id) {
+            // stays where it lives
+        } else {
+            clip.folder = folders[0]
+        }
+        if let original = clip.original { normaliseClips(in: [original]) }
+        clip.linkedFolders = Self.links(folders, excludingHome: clip.effectiveFolder)
+        try save()
+    }
+
+    /// The video shows in exactly `folders` (same rule as clips). Nothing ticked: back to Unsorted.
+    public func place(_ original: Original, in folders: [Folder]) throws {
+        let ids = Set(folders.map(\.id))
+        if folders.isEmpty {
+            original.folder = nil
+        } else if let home = original.folder, ids.contains(home.id) {
+            // stays where it lives
+        } else {
+            original.folder = folders[0]
+        }
+        normaliseClips(in: [original])
+        original.linkedFolders = Self.links(folders, excludingHome: original.folder)
+        try save()
+    }
+
+    public func setNote(_ clip: Clip, _ note: String) throws {
+        clip.note = Self.cleanNote(note)
+        try save()
+    }
+
+    public func setNote(_ original: Original, _ note: String) throws {
+        original.note = Self.cleanNote(note)
+        try save()
+    }
+
     public func setLinks(_ original: Original, to folders: [Folder]) throws {
         original.linkedFolders = Self.links(folders, excludingHome: original.folder)
         try save()

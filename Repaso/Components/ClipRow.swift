@@ -9,7 +9,7 @@ struct ClipActions {
     var info: (Clip) -> Void
     var delete: (Clip) -> Void
     var share: (Clip) -> Void
-    /// "Add to folders…" (also show it in other folders).
+    /// "Folders…": where it lives and where else it shows.
     var link: (Clip) -> Void = { _ in }
     /// "Remove from <folder>" for a clip shown here through a link; nil where that doesn't apply.
     var unlink: ((Clip) -> Void)?
@@ -38,8 +38,7 @@ struct ClipMenuItems: View {
             Button("Play full video", systemImage: "film") { actions.playFull(clip) }
         }
         Divider()
-        Button("Move to folder…", systemImage: "folder") { actions.move(clip) }
-        Button("Add to folders…", systemImage: "folder.badge.plus") { actions.link(clip) }
+        Button("Folders…", systemImage: "folder") { actions.link(clip) }
         if linkedHome != nil, let unlink = actions.unlink {
             Button("Remove from \(actions.folderName ?? "this folder")", systemImage: "link.badge.plus") { unlink(clip) }
         }

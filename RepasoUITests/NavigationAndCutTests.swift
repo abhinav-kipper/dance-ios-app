@@ -36,12 +36,12 @@ final class NavigationAndCutTests: XCTestCase {
         homeItem.tap()
         XCTAssertTrue(newFolderOnHome.waitForExistence(timeout: 3), "the menu jumps straight Home")
 
-        // Make a folder from the Move sheet and move a clip into it
+        // Make a folder from the Folders sheet and move a clip into it
         turns.tap()
         let prep = button(beginningWith: "Double turn prep")
         XCTAssertTrue(prep.waitForExistence(timeout: 5))
         prep.press(forDuration: 1.0)
-        app.buttons["Move to folder…"].tap()
+        app.buttons["Folders…"].tap()
         let newFolder = app.buttons["New folder"].firstMatch
         XCTAssertTrue(newFolder.waitForExistence(timeout: 3))
         newFolder.tap()
@@ -50,10 +50,12 @@ final class NavigationAndCutTests: XCTestCase {
         nameField.typeText("Spins")
         snap("16-new-folder-alert")
         app.alerts.buttons["Create"].tap()
-        let moveTo = app.buttons["Move to Spins"]
-        XCTAssertTrue(moveTo.waitForExistence(timeout: 3), "the new folder is selected, ready to move into")
-        moveTo.tap()
-        XCTAssertTrue(app.staticTexts["Moved to Spins"].firstMatch.waitForExistence(timeout: 4))
+        let spins = app.buttons["Spins"].firstMatch
+        XCTAssertTrue(spins.waitForExistence(timeout: 3))
+        XCTAssertEqual(spins.value as? String, "Shown here", "the new folder is ticked")
+        app.buttons["Turns"].firstMatch.tap()   // untick where it lives: it moves to Spins
+        app.buttons["Save"].tap()
+        XCTAssertTrue(app.staticTexts["In Spins"].firstMatch.waitForExistence(timeout: 4))
 
         // Cut (via Trim… on a clip): scrolling the strip moves the video
         let wrap = button(beginningWith: "Wrap and unwrap")

@@ -32,18 +32,29 @@ final class WalkthroughTests: XCTestCase {
         snap("03-player")
         app.showPlayerControls()
         app.buttons["speed-0.5"].firstMatch.tap()
-        app.buttons["Pause before repeat: none"].tap()
         sleep(1)
         snap("04-player-slow")
 
+
         // Rename the clip by tapping its name in the panel (paused first, so the panel doesn't slide away mid-step)
         app.descendants(matching: .any)["Video"].firstMatch.tap()
+        sleep(1)   // pausing slides the panel back up; let it settle before tapping in it
         app.showPlayerControls()
         app.descendants(matching: .any)["player-clip-name"].firstMatch.tap()   // the Player's label, not the list behind
         let nameField = app.textFields["Clip name"]
         XCTAssertTrue(nameField.waitForExistence(timeout: 3), "tapping the name starts renaming")
         nameField.typeText("Wrap and unwrap\n")
         XCTAssertTrue(app.staticTexts["Wrap and unwrap"].waitForExistence(timeout: 3))
+
+        // Notes (still paused, panel up): a notebook page, saved on Done, previewed in the panel
+        app.buttons["Notes, empty"].tap()
+        let page = app.textViews["Notes"]
+        XCTAssertTrue(page.waitForExistence(timeout: 3), "Notes opens the notebook")
+        page.typeText("Lead with the chest, not the arm")
+        snap("04-notebook")
+        app.buttons["Done"].firstMatch.tap()
+        XCTAssertTrue(app.descendants(matching: .any)["Lead with the chest, not the arm"].firstMatch.waitForExistence(timeout: 3),
+                      "the note shows in the panel (tap it to reopen the notebook)")
 
         // Hold the right side: steps forward frame by frame, then stays paused on that frame with the chip
         let videoElement = app.descendants(matching: .any)["Video"].firstMatch
@@ -155,15 +166,17 @@ final class WalkthroughTests: XCTestCase {
         XCTAssertTrue(wrap.waitForExistence(timeout: 3), "Undo brings it back")
         app.buttons["Done arranging"].tap()
 
-        // Move via the long-press menu (outside Arrange, holding opens the menu)
+        // Folders… (outside Arrange, holding opens the menu): tick Footwork, untick Turns, and it moves
         wrap.press(forDuration: 1.0)
-        app.buttons["Move to folder…"].tap()
+        app.buttons["Folders…"].tap()
         let footwork = app.buttons["Footwork"].firstMatch
         XCTAssertTrue(footwork.waitForExistence(timeout: 3))
         footwork.tap()
-        snap("09-move-sheet")
-        app.buttons["Move to Footwork"].tap()
-        XCTAssertTrue(wrap.waitForNonExistence(timeout: 5), "moved clips leave this folder")
+        app.buttons["Turns"].firstMatch.tap()
+        snap("09-folders-sheet")
+        app.buttons["Save"].tap()
+        XCTAssertTrue(app.staticTexts["In Footwork"].firstMatch.waitForExistence(timeout: 3))
+        XCTAssertTrue(wrap.waitForNonExistence(timeout: 5), "unticking Turns moves it out")
         snap("09b-after-move")
     }
 

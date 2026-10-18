@@ -5,7 +5,10 @@ extension XCUIApplication {
     @MainActor
     func showPlayerControls() {
         let show = buttons["Show controls"]
-        if show.exists && show.isHittable { show.tap() }
+        if show.exists && show.isHittable {
+            show.tap()
+            RunLoop.current.run(until: .now.addingTimeInterval(0.8))   // let the panel finish sliding up before tapping in it
+        }
     }
 
     /// Closes the Player. Its top bar fades while playing, so a tap on the video (pause) brings it back first.

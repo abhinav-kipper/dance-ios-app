@@ -20,13 +20,13 @@ final class LinksAndSearchTests: XCTestCase {
         let prep = button(beginningWith: "Double turn prep")
         XCTAssertTrue(prep.waitForExistence(timeout: 5))
         prep.press(forDuration: 1.0)
-        app.buttons["Add to folders…"].tap()
+        app.buttons["Folders…"].tap()
         let footworkRow = app.buttons["Footwork"].firstMatch
         XCTAssertTrue(footworkRow.waitForExistence(timeout: 3))
         footworkRow.tap()
         snap("12-link-sheet")
         app.buttons["Save"].tap()
-        XCTAssertTrue(app.staticTexts["Also in 1 folder"].firstMatch.waitForExistence(timeout: 3))
+        XCTAssertTrue(app.staticTexts["In Turns and 1 more"].firstMatch.waitForExistence(timeout: 3))
 
         // It shows in Footwork with the Linked badge
         app.buttons["Back to Home"].firstMatch.tap()

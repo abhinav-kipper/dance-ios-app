@@ -191,8 +191,6 @@ final class PlayerModel {
         }
     }
 
-    func toggleLoop() { loop.loopEnabled.toggle() }
-    func cycleGap() { loop.cycleGap() }
 
     func tearDown() {
         holdTask?.cancel()

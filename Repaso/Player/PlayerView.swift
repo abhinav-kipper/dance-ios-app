@@ -2,8 +2,8 @@ import SwiftUI
 import SwiftData
 import RepasoCore
 
-/// Full-screen player for clips or whole videos: tap to play/pause, hold a side to step frames, speed, loop,
-/// pause-before-repeat, favorite, learned. The control panel slides away while playing.
+/// Full-screen player for clips or whole videos: tap to play/pause, hold a side to step frames, speed, notes,
+/// favorite, learned. Clips always loop. The control panel slides away while playing.
 struct PlayerView: View {
     let request: PlayerRequest
     @Environment(\.modelContext) private var ctx
@@ -18,6 +18,7 @@ struct PlayerView: View {
     @State private var ringProgress: Double = 1
     @State private var deletingOriginal: Original?
     @State private var librarySheet: LibrarySheet?
+    @State private var showNotes = false
     @State private var cutting: CutRequest?
     @State private var fullVideo: PlayerRequest?
     @State private var confirmingDelete = false
@@ -142,6 +143,7 @@ struct PlayerView: View {
         }
         .sheet(item: $sharing) { ShareSheet(clip: $0) }
         .sheet(item: $librarySheet) { $0.content }
+        .sheet(isPresented: $showNotes, onDismiss: wake) { NotebookSheet(item: item) }
         .fullScreenCover(item: $cutting, onDismiss: { loadCurrentClip() }) {   // reload: the trim may have changed the range
             CutView(original: $0.original, focusClipID: $0.focusClipID)
         }
@@ -221,15 +223,20 @@ struct PlayerView: View {
                 .lineLimit(1)
                 .padding(.top, -10)
             if let note = item.note {
+                // A peek at the notebook; tap to open it.
                 Text(note)
-                    .font(.system(size: 15))
-                    .foregroundStyle(Theme.textPrimary)
+                    .font(.system(size: 15, design: .serif).italic())
+                    .foregroundStyle(Theme.textPrimary.opacity(0.9))
+                    .lineLimit(2)
+                    .contentShape(Rectangle())
+                    .onTapGesture { openNotes() }
+                    .accessibilityAddTraits(.isButton)
+                    .accessibilityHint("Opens the notes")
             }
             scrubber
             SpeedControl(speed: $speed, onChange: wake)
             HStack(spacing: 8) {
-                loopButton
-                gapButton
+                notesButton
                 Spacer(minLength: 4)
                 if let clip {
                     favoriteButton(clip)
@@ -424,44 +431,25 @@ struct PlayerView: View {
         return "\(original.title) · \(recorded.formatted(date: .abbreviated, time: .omitted))"
     }
 
-    private var loopButton: some View {
-        let on = model.loop.loopEnabled
-        return Button {
-            model.toggleLoop()
-            wake()
-        } label: {
-            Label("Loop", systemImage: "repeat")
+    /// Clips always loop with no pause, so the row's first button opens the notebook instead.
+    private var notesButton: some View {
+        Button(action: openNotes) {
+            Label("Notes", systemImage: item.note == nil ? "book.closed" : "book.closed.fill")
                 .font(.system(size: 14, weight: .semibold))
                 .lineLimit(1)
                 .fixedSize()
-                .foregroundStyle(on ? Theme.accent : Theme.textSecondary)
+                .foregroundStyle(Theme.rose)
                 .padding(.horizontal, 14)
                 .frame(height: 44)
-                .background(on ? Theme.accentTint : .white.opacity(0.15), in: Capsule())
+                .background(Theme.roseTint, in: Capsule())
         }
         .buttonStyle(PressableButtonStyle())
-        .accessibilityLabel(on ? "Loop on" : "Loop off")
+        .accessibilityLabel(item.note == nil ? "Notes, empty" : "Notes")
     }
 
-    private var gapButton: some View {
-        let gap = model.loop.gap
-        return Button {
-            model.cycleGap()
-            wake()
-        } label: {
-            Label(gap.shortLabel, systemImage: "timer")
-                .font(.system(size: 13, weight: .medium))
-                .lineLimit(1)
-                .fixedSize()
-                .foregroundStyle(gap == .none ? Theme.textSecondary : Theme.accent)
-                .padding(.horizontal, 12)
-                .frame(height: 44)
-                .background(gap == .none ? .white.opacity(0.15) : Theme.accentTint, in: Capsule())
-        }
-        .buttonStyle(PressableButtonStyle())
-        .opacity(model.loop.loopEnabled ? 1 : 0.4)
-        .disabled(!model.loop.loopEnabled)
-        .accessibilityLabel("Pause before repeat: \(gap == .none ? "none" : "\(gap.rawValue) seconds")")
+    private func openNotes() {
+        idleTask?.cancel()
+        showNotes = true
     }
 
     // MARK: Clip buttons
@@ -503,7 +491,6 @@ struct PlayerView: View {
     private var moreMenu: some View {
         Menu {
             if let clip {
-                Button("Name & note…", systemImage: "pencil") { librarySheet = .info(clip) }
                 Button("Trim…", systemImage: "timeline.selection") {
                     guard let original = clip.original else { return }
                     model.pause()
@@ -516,8 +503,7 @@ struct PlayerView: View {
                     }
                 }
                 Divider()
-                Button("Move to folder…", systemImage: "folder") { librarySheet = .move(.clip(clip)) }
-                Button("Add to folders…", systemImage: "folder.badge.plus") { librarySheet = .link(.clip(clip)) }
+                Button("Folders…", systemImage: "folder") { librarySheet = .link(.clip(clip)) }
                 Button("Share", systemImage: "square.and.arrow.up") {
                     model.pause()
                     sharing = clip
@@ -526,8 +512,7 @@ struct PlayerView: View {
                 Button("Delete clip", systemImage: "trash", role: .destructive) { confirmingDelete = true }
             } else if let original = item.original {
                 Button("Edit details…", systemImage: "pencil") { librarySheet = .videoInfo(original) }
-                Button("Move to folder…", systemImage: "folder") { librarySheet = .move(.original(original)) }
-                Button("Add to folders…", systemImage: "folder.badge.plus") { librarySheet = .link(.original(original)) }
+                Button("Folders…", systemImage: "folder") { librarySheet = .link(.original(original)) }
                 Divider()
                 Button("Delete video", systemImage: "trash", role: .destructive) { deletingOriginal = original }
             }

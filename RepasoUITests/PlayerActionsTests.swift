@@ -40,14 +40,15 @@ final class PlayerActionsTests: XCTestCase {
         favorite.tap()
         XCTAssertTrue(app.buttons["Remove from favorites"].firstMatch.waitForExistence(timeout: 3))
 
-        // More menu: move opens the Move sheet
+        // More menu: Folders… opens from the Player
         let more = app.buttons["More actions"]
         more.tap()
         snap("19-player-more-menu")
-        app.buttons["Move to folder…"].tap()
-        XCTAssertTrue(app.staticTexts["Move clip"].waitForExistence(timeout: 3), "Move opens from the Player")
+        XCTAssertFalse(app.buttons["Name & note…"].exists, "renaming is a tap on the name; notes have their own button")
+        app.buttons["Folders…"].tap()
+        XCTAssertTrue(app.staticTexts["Folders"].waitForExistence(timeout: 3), "Folders opens from the Player")
         app.swipeDown(velocity: .fast)   // close the sheet
-        XCTAssertTrue(app.staticTexts["Move clip"].waitForNonExistence(timeout: 3))
+        XCTAssertTrue(app.staticTexts["Folders"].waitForNonExistence(timeout: 3))
 
         // More menu: delete closes the Player and removes the clip
         more.tap()

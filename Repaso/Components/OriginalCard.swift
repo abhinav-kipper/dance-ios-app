@@ -148,8 +148,7 @@ struct OriginalCard: View {
         .contextMenu {
             Button("Play whole video", systemImage: "play", action: onPlay)
             Button("Edit details…", systemImage: "pencil", action: onEdit)
-            Button("Move video", systemImage: "folder", action: onMove)
-            Button("Add to folders…", systemImage: "folder.badge.plus", action: onLink)
+            Button("Folders…", systemImage: "folder", action: onLink)
             if linkedHome != nil, let onUnlink {
                 Button("Remove from \(folderName ?? "this folder")", systemImage: "link.badge.plus", action: onUnlink)
             }
