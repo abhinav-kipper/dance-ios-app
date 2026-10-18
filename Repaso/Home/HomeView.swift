@@ -16,8 +16,8 @@ struct HomeView: View {
     @State private var showPicker = false
     @State private var editingFolderID: UUID?
     @State private var deletingFolder: Folder?
-    /// Card order while a folder is being dragged; committed when the drag ends.
-    @State private var liveOrder: [UUID]?
+    /// Arrange mode's press-and-drag.
+    @State private var arrange = ArrangeSession()
     @State private var settleCounts: [UUID: Int] = [:]
     @State private var showGuide = false
     /// Arrange mode: press-and-hold drags folders to reorder them instead of opening their menu.
@@ -34,9 +34,10 @@ struct HomeView: View {
                 .padding(.horizontal, Theme.gutter)
                 .padding(.top, 12)
                 .padding(.bottom, 140)
+                .coordinateSpace(.named(ArrangeSession.space))
             }
             .scrollDismissesKeyboard(.interactively)
-            .dragTarget(env.drag) { $0.kind == .folder }   // catcher: dropping between cards keeps the live order
+            .scrollDisabled(arrange.isActive)   // a card is up: the finger moves it, not the page
             .background(Theme.bg.ignoresSafeArea())
             .overlay(alignment: .bottom) {
                 FloatingPill(title: "Import videos", systemImage: "square.and.arrow.down") { showPicker = true }
@@ -72,22 +73,10 @@ struct HomeView: View {
                 path = route
                 env.pendingRoute = nil
             }
-            .onChange(of: env.drag.active) { old, new in
-                if new?.kind == .folder, liveOrder == nil { liveOrder = folders.map(\.id) }
-                if new == nil, let old, old.kind == .folder { commitOrder(placed: old.id) }
-            }
         }
     }
 
-    private var draggingFolderID: UUID? {
-        env.drag.active?.kind == .folder ? env.drag.active?.id : nil
-    }
-
-    private var displayedFolders: [Folder] {
-        guard let liveOrder else { return folders }
-        let byID = Dictionary(folders.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-        return liveOrder.compactMap { byID[$0] } + folders.filter { !liveOrder.contains($0.id) }
-    }
+    private var displayedFolders: [Folder] { arrange.arranged(folders) }
 
     // MARK: Sections
 
@@ -98,12 +87,6 @@ struct HomeView: View {
                     .font(.system(size: 40, weight: .bold))
                     .tracking(-1.2)
                     .foregroundStyle(Theme.textPrimary)
-                if draggingFolderID != nil || arranging {
-                    Text(draggingFolderID != nil ? "Drop to place" : "Hold a folder, then drag it")
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(Theme.rose)
-                        .transition(.opacity)
-                }
             }
             Spacer()
             if arranging {
@@ -182,6 +165,7 @@ struct HomeView: View {
                     folderCell(folder)
                 }
             }
+            .animation(Theme.motion(reduceMotion), value: arrange.order)
         }
     }
 
@@ -190,7 +174,7 @@ struct HomeView: View {
         Button { path.append(.search) } label: {
             HStack(spacing: 10) {
                 Image(systemName: "magnifyingglass")
-                Text("Search clips, teachers, folders")
+                Text("Search")
                 Spacer(minLength: 0)
             }
             .font(.system(size: 15))
@@ -207,8 +191,8 @@ struct HomeView: View {
         HStack(spacing: 14) {
             if !pending.isEmpty {
                 NavigationLink(value: Route.unsorted) {
-                    tile(icon: "tray", iconColor: Theme.rose, title: "Unsorted · \(pending.count)",
-                         detail: pending.count == 1 ? "1 video to go through" : "\(pending.count) to go through", dot: true)
+                    tile(icon: "tray", iconColor: Theme.rose, title: "Unsorted",
+                         detail: pending.count == 1 ? "1 video" : "\(pending.count) videos", dot: true)
                 }
                 .buttonStyle(PressableButtonStyle())
             }
@@ -252,23 +236,15 @@ struct HomeView: View {
         let editing = Binding(
             get: { editingFolderID == folder.id },
             set: { if !$0 { editingFolderID = nil } })
-        let isPlaceholder = draggingFolderID == folder.id
-        // Not wrapped in a link while editing: a disabled link would disable the name field too.
+        // Not wrapped in a link while editing (a disabled link would disable the name field too) or arranging.
         Group {
-            if editingFolderID == folder.id {
+            if editingFolderID == folder.id || arranging {
                 FolderCard(folder: folder, isEditingName: editing)
             } else {
                 NavigationLink(value: Route.folder(folder.id)) {
                     FolderCard(folder: folder, isEditingName: editing)
                 }
                 .buttonStyle(PressableButtonStyle())
-            }
-        }
-        .opacity(isPlaceholder ? 0 : 1)
-        .overlay {
-            if isPlaceholder {
-                RoundedRectangle(cornerRadius: Theme.Radius.folderCard, style: .continuous)
-                    .strokeBorder(.white.opacity(0.25), style: StrokeStyle(lineWidth: 1.5, dash: [6, 5]))
             }
         }
         .keyframeAnimator(initialValue: 1.0, trigger: settleCounts[folder.id, default: 0]) { view, scale in
@@ -280,20 +256,13 @@ struct HomeView: View {
                 CubicKeyframe(1, duration: 0.36)
             }
         }
-        .jiggle((arranging || draggingFolderID != nil) && !isPlaceholder)
-        .dragSource(DragRef(kind: .folder, id: folder.id), drag: env.drag, origin: nil, enabled: arranging) {
-            FolderLiftPreview(name: folder.name, clipCount: FolderContents.clipCount(in: folder), reduceMotion: reduceMotion)
+        .jiggle(arranging && arrange.dragging != folder.id)
+        .arrangeItem(folder.id, in: arrange, items: folders.map(\.id), enabled: arranging) { outcome in
+            if case .reordered(let ids) = outcome { commitOrder(ids, placed: folder.id) }
         }
-        .dragTarget(env.drag, isTargeted: { if $0 { reorder(onto: folder.id) } }) { $0.kind == .folder }
         .modifier(MenuUnlessArranging(isArranging: arranging) {
             Button("Rename", systemImage: "pencil") { editingFolderID = folder.id }
             Button("Arrange folders", systemImage: "hand.draw") { withAnimation(Theme.spring) { arranging = true } }
-            Button("Move up", systemImage: "arrow.up") {
-                env.perform { try env.library(ctx).reorderFolder(folder, by: -1) }
-            }
-            Button("Move down", systemImage: "arrow.down") {
-                env.perform { try env.library(ctx).reorderFolder(folder, by: 1) }
-            }
             Button("Delete", systemImage: "trash", role: .destructive) { requestDelete(folder) }
         })
         .transition(reduceMotion ? .opacity : .scale(scale: 0.6).combined(with: .opacity))
@@ -304,13 +273,9 @@ struct HomeView: View {
             Image(systemName: "film.stack")
                 .font(.system(size: 40))
                 .foregroundStyle(Theme.accent)
-            Text("Import your first class video")
+            Text("No videos yet")
                 .font(.system(size: 20, weight: .bold))
                 .foregroundStyle(Theme.textPrimary)
-            Text("Pick videos from Photos, cut the moves you want to practice, and file them in folders.")
-                .font(.system(size: 15))
-                .foregroundStyle(Theme.textSecondary)
-                .multilineTextAlignment(.center)
         }
         .padding(28)
         .frame(maxWidth: .infinity)
@@ -330,18 +295,11 @@ struct HomeView: View {
         }
     }
 
-    /// Live reorder: the dragged card takes the hovered card's slot.
-    private func reorder(onto id: UUID) {
-        guard let dragged = draggingFolderID, dragged != id else { return }
-        withAnimation(reduceMotion ? .easeOut(duration: 0.2) : Theme.spring) {
-            liveOrder = FolderOrder.moving(dragged, onto: id, in: liveOrder ?? folders.map(\.id))
-        }
-    }
-
-    private func commitOrder(placed id: UUID) {
-        let ordered = displayedFolders
+    /// The end of an Arrange drag: save the new order and settle the card that moved.
+    private func commitOrder(_ ids: [UUID], placed id: UUID) {
+        let byID = Dictionary(folders.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let ordered = ids.compactMap { byID[$0] }
         env.perform { try env.library(ctx).setFolderOrder(ordered) }
-        liveOrder = nil
         if !reduceMotion { settleCounts[id, default: 0] += 1 }
     }
 

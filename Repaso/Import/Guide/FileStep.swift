@@ -12,17 +12,12 @@ struct FileStep: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("File them")
-                    .font(.system(size: 30, weight: .bold))
-                    .tracking(-0.5)
-                    .foregroundStyle(Theme.textPrimary)
-                    .accessibilityAddTraits(.isHeader)
-                Text("Pick a folder for each clip.")
-                    .font(.system(size: 15))
-                    .foregroundStyle(Theme.textSecondary)
-            }
-            .padding(.horizontal, Theme.gutter)
+            Text("Folders")
+                .font(.system(size: 30, weight: .bold))
+                .tracking(-0.5)
+                .foregroundStyle(Theme.textPrimary)
+                .accessibilityAddTraits(.isHeader)
+                .padding(.horizontal, Theme.gutter)
             ScrollView {
                 VStack(spacing: 10) {
                     ForEach(Array(model.clips.enumerated()), id: \.element.id) { i, clip in
@@ -90,7 +85,7 @@ struct FileStep: View {
             if let progress = model.exportProgress {
                 VStack(spacing: 6) {
                     ProgressView(value: progress).tint(Theme.accent)
-                    Text("Saving clips as their own videos…")
+                    Text("Saving…")
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundStyle(Theme.textSecondary)
                 }
@@ -99,7 +94,7 @@ struct FileStep: View {
             Button {
                 Task {
                     do { try await model.finish() } catch {
-                        env.showToast("Couldn't save the clips. Nothing was filed.", seconds: 3)
+                        env.showToast("Couldn't save", seconds: 2.2)
                     }
                 }
             } label: {

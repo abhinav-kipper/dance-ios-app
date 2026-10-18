@@ -16,7 +16,7 @@ struct ClipActions {
     var folderName: String?
     /// Opens the cutter on the clip's video with the clip selected, to trim it.
     var trim: (Clip) -> Void = { _ in }
-    /// Turns on Arrange mode, where clips can be dragged onto folders; nil where there's nothing to drag to.
+    /// Turns on Arrange mode (drag to reorder, or onto a folder); nil where there's nothing to arrange.
     var arrange: (() -> Void)?
 }
 
@@ -37,7 +37,7 @@ struct ClipMenuItems: View {
             Button("Remove from \(actions.folderName ?? "this folder")", systemImage: "link.badge.plus") { unlink(clip) }
         }
         if let arrange = actions.arrange {
-            Button("Drag to folders", systemImage: "hand.draw") { arrange() }
+            Button("Arrange", systemImage: "hand.draw") { arrange() }
         }
         Divider()
         Button("Share", systemImage: "square.and.arrow.up") { actions.share(clip) }
@@ -56,9 +56,6 @@ struct ClipMenuItems: View {
 struct ClipRow: View {
     let clip: Clip
     let actions: ClipActions
-    /// Folder screens let clips be dragged onto subfolders; `dragOrigin` is that screen's folder.
-    var isDraggable = false
-    var dragOrigin: UUID?
     /// Set when the clip shows in this folder through a link: the name of its home.
     var linkedHome: String?
     @Environment(AppEnvironment.self) private var env
@@ -87,13 +84,7 @@ struct ClipRow: View {
         .accessibilityLabel(accessibilityText)
         .accessibilityHint("Plays the clip")
         .frame(minHeight: 64)
-        .opacity(isLifted ? 0.28 : 1)
-        .scaleEffect(isLifted ? 0.97 : 1)
-        .animation(Theme.spring, value: isLifted)
-        .modifier(ClipDragSource(clip: clip, drag: env.drag, origin: dragOrigin, isEnabled: isDraggable, reduceMotion: reduceMotion))
-        .modifier(MenuUnlessArranging(isArranging: isDraggable) {
-            ClipMenuItems(clip: clip, actions: actions, linkedHome: linkedHome)
-        })
+        .contextMenu { ClipMenuItems(clip: clip, actions: actions, linkedHome: linkedHome) }
     }
 
     @ViewBuilder
@@ -130,8 +121,6 @@ struct ClipRow: View {
         if clip.isLearned { parts.append("learned") }
         return parts.joined(separator: ", ")
     }
-
-    private var isLifted: Bool { env.drag.active?.id == clip.id }
 }
 
 /// Press-and-hold means the menu, except in Arrange mode, where it means drag (so the two never clash).
@@ -144,24 +133,6 @@ struct MenuUnlessArranging<Items: View>: ViewModifier {
             content
         } else {
             content.contextMenu { items() }
-        }
-    }
-}
-
-struct ClipDragSource: ViewModifier {
-    let clip: Clip
-    let drag: DragState
-    let origin: UUID?
-    let isEnabled: Bool
-    let reduceMotion: Bool
-
-    func body(content: Content) -> some View {
-        if isEnabled {
-            content.dragSource(DragRef(kind: .clip, id: clip.id), drag: drag, origin: origin) {
-                ClipLiftPreview(name: clip.name, length: clip.length, reduceMotion: reduceMotion)
-            }
-        } else {
-            content
         }
     }
 }

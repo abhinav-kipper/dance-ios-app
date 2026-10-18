@@ -17,16 +17,16 @@ final class GuideAndNotesTests: XCTestCase {
 
         // The guide: open from ?, page through, finish
         app.buttons["How to use Repaso"].tap()
-        XCTAssertTrue(app.staticTexts["Bring in your class videos"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.staticTexts["Tap Import, pick your class videos"].waitForExistence(timeout: 3))
         snap("20-guide-first")
-        for _ in 0..<5 { app.buttons["Next"].tap() }
-        XCTAssertTrue(app.staticTexts["Find your way"].waitForExistence(timeout: 3))
+        for _ in 0..<4 { app.buttons["Next"].tap() }
+        XCTAssertTrue(app.staticTexts["Tap Arrange, then hold and drag"].waitForExistence(timeout: 3))
         snap("21-guide-last")
         app.buttons["Start practising"].tap()
         XCTAssertTrue(app.buttons["New folder"].waitForExistence(timeout: 3), "the guide closes back to Home")
 
         // Unsorted holds the video left half-way through the guide (Sunday, one clip named)
-        let unsorted = button(beginningWith: "Unsorted · 1")
+        let unsorted = button(beginningWith: "Unsorted, 1 video")
         XCTAssertTrue(unsorted.exists, "a video still to go through shows the Unsorted tile")
         unsorted.tap()
         XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "1 clip so far")).firstMatch

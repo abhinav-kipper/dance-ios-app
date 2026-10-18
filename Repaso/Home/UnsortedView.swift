@@ -27,14 +27,9 @@ struct UnsortedView: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Back to Home")
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Unsorted")
-                        .font(.system(size: 34, weight: .bold))
-                        .foregroundStyle(Theme.textPrimary)
-                    Text("Pick up where you left off.")
-                        .font(.system(size: 15))
-                        .foregroundStyle(Theme.textSecondary)
-                }
+                Text("Unsorted")
+                    .font(.system(size: 34, weight: .bold))
+                    .foregroundStyle(Theme.textPrimary)
                 LazyVGrid(columns: columns, spacing: 12) {
                     ForEach(Array(pending.enumerated()), id: \.element.id) { i, recording in
                         card(recording).riseIn(i)
@@ -50,15 +45,20 @@ struct UnsortedView: View {
         .onChange(of: pending.isEmpty) { _, empty in if empty { dismiss() } }
         .confirmationDialog("Delete this video?", isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }),
                             titleVisibility: .visible, presenting: deleting) { recording in
-            Button("Delete video", role: .destructive) {
+            Button(Self.deleteTitle(recording), role: .destructive) {
                 env.perform { try withAnimation(Theme.spring) { try env.library(ctx).deletePending(recording) } }
-            }
-        } message: { recording in
-            if !recording.clips.isEmpty {
-                Text(recording.clips.count == 1 ? "The clip made from it goes too." : "The \(recording.clips.count) clips made from it go too.")
             }
         }
         .toastHost(env)
+    }
+
+    /// "Delete video", or "Delete video and 2 clips".
+    private static func deleteTitle(_ recording: Recording) -> String {
+        switch recording.clips.count {
+        case 0: "Delete video"
+        case 1: "Delete video and 1 clip"
+        case let n: "Delete video and \(n) clips"
+        }
     }
 
     private func card(_ recording: Recording) -> some View {

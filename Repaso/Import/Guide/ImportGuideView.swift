@@ -109,7 +109,7 @@ struct ImportGuideView: View {
             ProgressView(value: progress)
                 .tint(Theme.rose)
                 .padding(.horizontal, 60)
-            Text("Bringing the video in…")
+            Text("Importing…")
                 .font(.system(size: 15, weight: .semibold))
                 .foregroundStyle(Theme.textSecondary)
                 .padding(.bottom, 40)
@@ -149,10 +149,13 @@ struct ImportGuideView: View {
             if model.position.count > 1 {
                 Text("Video \(model.position.index + 1) of \(model.position.count)")
                     .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(Theme.textSecondary)
+                    .foregroundStyle(Theme.textPrimary)
                     .contentTransition(.numericText())
             }
         }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 7)
+        .glassEffect(.regular.tint(Theme.overVideoTint), in: Capsule())   // readable over a bright video
     }
 
     /// The step's own action: Done in the cutter once a clip is made.

@@ -50,10 +50,6 @@ struct KeepWholeStep: View {
                         .contentShape(Capsule())
                 }
                 .buttonStyle(PressableButtonStyle())
-                Text("Your clips stay. They can only be trimmed shorter later.")
-                    .font(.system(size: 13))
-                    .foregroundStyle(Theme.textSecondary)
-                    .multilineTextAlignment(.center)
             }
             .padding(.horizontal, Theme.gutter)
             .padding(.bottom, 12)

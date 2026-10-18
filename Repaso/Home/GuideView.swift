@@ -7,43 +7,19 @@ struct GuideView: View {
     @State private var page = 0
 
     struct Card: Identifiable {
+        enum Demo { case importing, cut, file, practise, arrange }
         let id: Int
-        let symbol: String
+        let demo: Demo
         let title: String
-        let lines: [String]
+        let caption: String
     }
 
     static let cards: [Card] = [
-        Card(id: 0, symbol: "square.and.arrow.down", title: "Bring in your class videos", lines: [
-            "Tap Import and pick videos from Photos, screen recordings included.",
-            "For each one: make clips, or use the whole video. Name each clip and who taught it.",
-            "Last, pick a folder for each clip. Continue later leaves the rest in Unsorted.",
-        ]),
-        Card(id: 1, symbol: "scissors", title: "Cut the moves you want", lines: [
-            "Mark start and Mark end around a move, then name it.",
-            "Scroll the strip to move through the video; pinch it to see more.",
-            "Trim a clip any time from its menu: drag its handles on the strip.",
-        ]),
-        Card(id: 2, symbol: "figure.dance", title: "Practise frame by frame", lines: [
-            "Tap the middle to play or pause.",
-            "Tap the left or right side for one frame back or forward; hold it to keep stepping.",
-            "Swipe up or down for the next clip. Pinch to zoom; two-finger tap to reset.",
-        ]),
-        Card(id: 3, symbol: "slider.horizontal.below.rectangle", title: "Your controls", lines: [
-            "While playing, the panel slides away. Drag its handle up to bring it back.",
-            "Slow it down, and open Notes to write how the move should feel.",
-            "★ favourite, ✓ learned, and ••• to trim, file, share or delete.",
-        ]),
-        Card(id: 4, symbol: "folder", title: "Keep it organised", lines: [
-            "Press and hold any clip or folder for its menu.",
-            "Folders… shows a clip in several folders at once. Arrange lets you drag clips onto folders.",
-            "Make a New folder right from any folder picker.",
-        ]),
-        Card(id: 5, symbol: "magnifyingglass", title: "Find your way", lines: [
-            "Swipe right to go back. Hold Back to jump straight Home.",
-            "Search clips, teachers, notes and folders from Home.",
-            "Open this guide again any time with ? on Home.",
-        ]),
+        Card(id: 0, demo: .importing, title: "Import", caption: "Tap Import, pick your class videos"),
+        Card(id: 1, demo: .cut, title: "Cut a move", caption: "Mark start, Mark end, name it"),
+        Card(id: 2, demo: .file, title: "File it", caption: "A folder for each clip, then Finish"),
+        Card(id: 3, demo: .practise, title: "Practise", caption: "Tap a side for one frame · swipe up for the next"),
+        Card(id: 4, demo: .arrange, title: "Arrange", caption: "Tap Arrange, then hold and drag"),
     ]
 
     private var isLast: Bool { page == Self.cards.count - 1 }
@@ -89,40 +65,38 @@ struct GuideView: View {
     }
 
     private func cardView(_ card: Card) -> some View {
-        VStack(alignment: .leading, spacing: 22) {
+        VStack(spacing: 22) {
             Spacer(minLength: 0)
-            Image(systemName: card.symbol)
-                .font(.system(size: 40, weight: .semibold))
-                .foregroundStyle(tint(card))
-                .frame(width: 84, height: 84)
-                .background(tint(card).opacity(0.15), in: RoundedRectangle(cornerRadius: 26, style: .continuous))
-                .accessibilityHidden(true)
-            Text(card.title)
-                .font(.system(size: 30, weight: .bold))
-                .tracking(-0.6)
-                .foregroundStyle(Theme.textPrimary)
-                .accessibilityAddTraits(.isHeader)
-            VStack(alignment: .leading, spacing: 14) {
-                ForEach(card.lines, id: \.self) { line in
-                    HStack(alignment: .firstTextBaseline, spacing: 10) {
-                        Circle().fill(tint(card)).frame(width: 6, height: 6)
-                            .alignmentGuide(.firstTextBaseline) { $0[.bottom] - 1 }
-                        Text(line)
-                            .font(.system(size: 17))
-                            .foregroundStyle(Theme.textSecondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                }
+            demo(card.demo)
+                .scaleEffect(1.08)
+                .frame(height: 440)
+            VStack(spacing: 8) {
+                Text(card.title)
+                    .font(.system(size: 30, weight: .bold))
+                    .tracking(-0.6)
+                    .foregroundStyle(Theme.textPrimary)
+                    .accessibilityAddTraits(.isHeader)
+                Text(card.caption)
+                    .font(.system(size: 16, weight: .medium))
+                    .foregroundStyle(Theme.textSecondary)
+                    .multilineTextAlignment(.center)
             }
-            Spacer(minLength: 0)
+            .padding(.horizontal, Theme.gutter)
             Spacer(minLength: 0)
         }
-        .padding(.horizontal, Theme.gutter + 8)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(maxWidth: .infinity)
     }
 
-    /// Cards alternate green and pink, like the app: green for doing, pink for finding your way.
-    private func tint(_ card: Card) -> Color { card.id.isMultiple(of: 2) ? Theme.accent : Theme.rose }
+    @ViewBuilder
+    private func demo(_ demo: Card.Demo) -> some View {
+        switch demo {
+        case .importing: ImportDemo()
+        case .cut: CutDemo()
+        case .file: FileDemo()
+        case .practise: PractiseDemo()
+        case .arrange: ArrangeDemo()
+        }
+    }
 
     private var dots: some View {
         HStack(spacing: 8) {

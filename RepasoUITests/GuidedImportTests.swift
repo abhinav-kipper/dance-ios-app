@@ -104,7 +104,7 @@ final class GuidedImportTests: XCTestCase {
         markClip("Cross step")
         app.buttons["Continue later"].tap()
 
-        let unsorted = button(beginningWith: "Unsorted · 3")
+        let unsorted = button(beginningWith: "Unsorted, 3 videos")
         XCTAssertTrue(unsorted.waitForExistence(timeout: 5), "Sunday plus both picked videos wait in Unsorted")
         unsorted.tap()
         let started = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "1 clip so far"))
@@ -125,9 +125,9 @@ final class GuidedImportTests: XCTestCase {
         }
         footwork.press(forDuration: 1.0)
         app.buttons["Delete"].tap()
-        XCTAssertTrue(app.staticTexts["“Move contents up” keeps its folders on Home. Its clips go to Orphans."]
+        XCTAssertTrue(app.staticTexts["Kept clips move to Orphans."]
             .waitForExistence(timeout: 3))
-        app.buttons["Move contents up"].tap()
+        app.buttons["Keep contents"].tap()
         let orphans = button(beginningWith: "Orphans")
         XCTAssertTrue(orphans.waitForExistence(timeout: 5), "an Orphans folder appears on Home")
         orphans.tap()

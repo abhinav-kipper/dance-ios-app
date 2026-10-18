@@ -24,19 +24,6 @@ struct TrimChoiceStep: View {
             .frame(maxHeight: .infinity)
             .padding(.horizontal, 12)
 
-            VStack(spacing: 6) {
-                Text("Make clips from it?")
-                    .font(.system(size: 28, weight: .bold))
-                    .tracking(-0.4)
-                    .foregroundStyle(Theme.textPrimary)
-                    .accessibilityAddTraits(.isHeader)
-                Text("Cut out the moves you want, or keep it as one clip.")
-                    .font(.system(size: 15))
-                    .foregroundStyle(Theme.textSecondary)
-                    .multilineTextAlignment(.center)
-            }
-            .padding(.horizontal, Theme.gutter)
-
             VStack(spacing: 10) {
                 Button(action: onMakeClips) {
                     Label("Make clips", systemImage: "scissors")

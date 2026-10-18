@@ -55,17 +55,6 @@ public struct LibraryService {
         try save()
     }
 
-    public func reorderFolder(_ folder: Folder, by offset: Int) throws {
-        let ordered = try siblings(of: folder.parent).sorted { $0.sortIndex < $1.sortIndex }
-        guard let i = ordered.firstIndex(where: { $0.id == folder.id }) else { return }
-        let j = i + offset
-        guard ordered.indices.contains(j) else { return }
-        var reordered = ordered
-        reordered.swapAt(i, j)
-        for (index, f) in reordered.enumerated() { f.sortIndex = index }
-        try save()
-    }
-
     public func deleteFolder(_ folder: Folder, mode: FolderDeleteMode) throws {
         switch mode {
         case .deleteContents:
@@ -86,7 +75,10 @@ public struct LibraryService {
                 child.sortIndex = next
                 next += 1
             }
-            for clip in folder.clips { clip.folder = clipTarget }
+            for clip in folder.clips {
+                clip.folder = clipTarget
+                clip.folderOrder = nil
+            }
             // Clips only linked here are linked to the parent instead (root has no links).
             if let target {
                 for clip in folder.linkedClips where !clip.linkedFolders.contains(where: { $0.id == target.id }) {
@@ -201,6 +193,7 @@ public struct LibraryService {
     }
 
     public func moveClip(_ clip: Clip, to folder: Folder) throws {
+        if clip.folder?.id != folder.id { clip.folderOrder = nil }   // it arrives on top of its new folder
         clip.folder = folder
         clip.linkedFolders.removeAll { $0.id == folder.id }
         try save()
@@ -238,8 +231,16 @@ public struct LibraryService {
         let ids = Set(folders.map(\.id))
         if let first = folders.first, !(clip.folder.map { ids.contains($0.id) } ?? false) {
             clip.folder = first
+            clip.folderOrder = nil
         }
         clip.linkedFolders = Self.links(folders, excludingHome: clip.folder)
+        try save()
+    }
+
+    /// Arrange: the clips living in `folder`, in the order they were dragged into.
+    public func setClipOrder(_ clips: [Clip], in folder: Folder) throws {
+        guard clips.allSatisfy({ $0.folder?.id == folder.id }) else { throw LibraryError.invalidMoveTarget }
+        for (index, clip) in clips.enumerated() { clip.folderOrder = index }
         try save()
     }
 
@@ -320,7 +321,10 @@ public struct LibraryService {
         guard recording.isPending else { throw LibraryError.notPending }
         guard recording.clips.allSatisfy({ folders[$0.id] != nil }) else { throw LibraryError.missingFolder }
         try checkOwnFiles(ownFiles, on: recording)
-        for clip in recording.clips { clip.folder = folders[clip.id] }
+        for clip in recording.clips {
+            clip.folder = folders[clip.id]
+            clip.folderOrder = nil
+        }
         recording.isPending = false
         let files = moveToOwnFiles(ownFiles, from: recording)
         try save()

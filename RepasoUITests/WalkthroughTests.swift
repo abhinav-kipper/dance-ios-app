@@ -106,8 +106,8 @@ final class WalkthroughTests: XCTestCase {
 
         // Arrange, then drag a clip onto a subfolder card, then Undo
         XCTAssertTrue(wrap.waitForExistence(timeout: 5))
-        app.buttons["Arrange: drag clips onto folders"].tap()
-        let hammerCard = button(beginningWith: "Hammerlock,")   // the folder card, not a clip
+        app.buttons["Arrange clips and folders"].tap()
+        let hammerCard = element(beginningWith: "Hammerlock,")   // the folder card, not a clip
         XCTAssertTrue(hammerCard.waitForExistence(timeout: 3))
         wrap.press(forDuration: 0.6, thenDragTo: hammerCard, withVelocity: .slow, thenHoldForDuration: 0.3)
         XCTAssertTrue(app.staticTexts["Moved to Hammerlock"].waitForExistence(timeout: 3), "drop shows the Undo toast")
@@ -131,8 +131,8 @@ final class WalkthroughTests: XCTestCase {
         snap("09b-after-move")
     }
 
-    /// Hovering a subfolder card for 0.9s opens it with the clip still in hand; releasing files it there.
-    func testSpringLoadedDrop() throws {
+    /// In Arrange, dragging a clip onto another clip's place reorders them, and the order is kept.
+    func testArrangeReordersClips() throws {
         continueAfterFailure = false
         app.launchArguments = ["-uiTesting", "-seedDemo"]
         app.launch()
@@ -142,14 +142,19 @@ final class WalkthroughTests: XCTestCase {
         }
         turns.tap()
         let wrap = button(beginningWith: "Wrap and unwrap")
+        let whole = button(beginningWith: "Thursday class")
         XCTAssertTrue(wrap.waitForExistence(timeout: 5))
-        app.buttons["Arrange: drag clips onto folders"].tap()
-        let hammerCard = button(beginningWith: "Hammerlock,")
-        wrap.press(forDuration: 0.6, thenDragTo: hammerCard, withVelocity: .slow, thenHoldForDuration: 1.6)
-        XCTAssertTrue(app.staticTexts["Moved to Hammerlock"].waitForExistence(timeout: 3))
-        XCTAssertTrue(app.staticTexts["Hammerlock"].exists, "the hovered folder opened")
-        XCTAssertTrue(button(beginningWith: "Wrap and unwrap").exists, "the clip now lives here")
-        snap("11-spring-loaded")
+        XCTAssertLessThan(whole.frame.minY, wrap.frame.minY, "seed order: the full video first")
+        app.buttons["Arrange clips and folders"].tap()
+        wrap.press(forDuration: 0.6, thenDragTo: whole, withVelocity: .slow, thenHoldForDuration: 0.4)
+        snap("11-arrange-reordered")
+        let moved = NSPredicate { _, _ in wrap.frame.minY < whole.frame.minY || wrap.frame.minX < whole.frame.minX }
+        wait(for: [expectation(for: moved, evaluatedWith: nil)], timeout: 3)
+        app.buttons["Done arranging"].tap()
+        app.buttons["Back to Home"].firstMatch.tap()
+        turns.tap()
+        XCTAssertTrue(wrap.waitForExistence(timeout: 5))
+        XCTAssertTrue(wrap.frame.minY < whole.frame.minY || wrap.frame.minX < whole.frame.minX, "the new order is kept")
     }
 
     func testHomeReorderByDrag() throws {
@@ -162,15 +167,21 @@ final class WalkthroughTests: XCTestCase {
             throw XCTSkip("No seed.mov in the app container; DemoSeed did nothing.")
         }
         XCTAssertLessThan(turns.frame.minX, footwork.frame.minX, "seed puts Turns first")
-        // Arrange switches press-and-hold from the menu to dragging
+        // Arrange switches press-and-hold from the menu to dragging; the cards stop being links
         app.buttons["Arrange folders"].firstMatch.tap()
         XCTAssertTrue(app.buttons["Done arranging"].waitForExistence(timeout: 3))
-        footwork.press(forDuration: 0.8, thenDragTo: turns, withVelocity: .slow, thenHoldForDuration: 0.5)
+        let turnsCard = element(beginningWith: "Turns")
+        let footworkCard = element(beginningWith: "Footwork")
+        footworkCard.press(forDuration: 0.8, thenDragTo: turnsCard, withVelocity: .slow, thenHoldForDuration: 0.5)
         snap("10-home-reordered")
-        let moved = NSPredicate { _, _ in footwork.frame.minX < turns.frame.minX }
+        let moved = NSPredicate { _, _ in footworkCard.frame.minX < turnsCard.frame.minX }
         wait(for: [expectation(for: moved, evaluatedWith: nil)], timeout: 3)
         app.buttons["Done arranging"].tap()
-        XCTAssertFalse(app.staticTexts["Hold a folder, then drag it"].exists, "the arranging hint goes when arranging ends")
+        XCTAssertLessThan(footwork.frame.minX, turns.frame.minX, "the new order is kept")
+    }
+
+    private func element(beginningWith prefix: String) -> XCUIElement {
+        app.descendants(matching: .any).matching(NSPredicate(format: "label BEGINSWITH %@", prefix)).firstMatch
     }
 
     private func button(beginningWith prefix: String) -> XCUIElement {

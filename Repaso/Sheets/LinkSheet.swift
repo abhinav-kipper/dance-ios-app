@@ -21,14 +21,9 @@ struct LinkSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Folders")
-                    .font(.system(size: 22, weight: .bold))
-                    .foregroundStyle(Theme.textPrimary)
-                Text("Tick every folder this clip should show in.")
-                    .font(.system(size: 13))
-                    .foregroundStyle(Theme.textSecondary)
-            }
+            Text("Folders")
+                .font(.system(size: 22, weight: .bold))
+                .foregroundStyle(Theme.textPrimary)
             .padding(.top, 28)
             ScrollView {
                 VStack(spacing: 2) {

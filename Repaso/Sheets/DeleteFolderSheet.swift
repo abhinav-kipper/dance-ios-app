@@ -22,14 +22,16 @@ struct DeleteFolderSheet: View {
                 .font(.system(size: 22, weight: .bold))
                 .foregroundStyle(Theme.textPrimary)
                 .multilineTextAlignment(.center)
-            Text(detail(parentName))
-                .font(.system(size: 15))
-                .foregroundStyle(Theme.textSecondary)
-                .multilineTextAlignment(.center)
+            if !detail(parentName).isEmpty {
+                Text(detail(parentName))
+                    .font(.system(size: 15))
+                    .foregroundStyle(Theme.textSecondary)
+                    .multilineTextAlignment(.center)
+            }
             Spacer()
-            PrimarySheetButton(title: "Delete contents", role: .destructive) { delete(.deleteContents) }
+            PrimarySheetButton(title: "Delete with contents", role: .destructive) { delete(.deleteContents) }
             if !folder.isOrphans {
-                PrimarySheetButton(title: "Move contents up") { delete(.moveContentsUp) }
+                PrimarySheetButton(title: "Keep contents") { delete(.moveContentsUp) }
             }
             Button("Cancel") { dismiss() }
                 .font(.system(size: 17, weight: .semibold))
@@ -43,13 +45,11 @@ struct DeleteFolderSheet: View {
 
     /// What "Move contents up" does here. A top-level folder's clips have nowhere above them, so they go to Orphans.
     private func detail(_ parentName: String) -> String {
-        if folder.isOrphans { return "Its clips will be deleted." }
+        if folder.isOrphans { return "" }
         if folder.parent == nil {
-            return folder.clips.isEmpty
-                ? "“Move contents up” keeps its folders on Home."
-                : "“Move contents up” keeps its folders on Home. Its clips go to \(LibraryService.orphansName)."
+            return folder.clips.isEmpty ? "Kept contents move to Home." : "Kept clips move to \(LibraryService.orphansName)."
         }
-        return "“Move contents up” keeps its folders and clips in \(parentName)."
+        return "Kept contents move to \(parentName)."
     }
 
     private func delete(_ mode: FolderDeleteMode) {

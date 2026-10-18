@@ -79,3 +79,57 @@ struct FolderContentsTests {
         #expect(try FolderContents.rootFolders(ctx).map(\.id) == [b.id, a.id])
     }
 }
+
+@MainActor
+struct ClipOrderTests {
+    let ctx: ModelContext
+    let lib: LibraryService
+
+    init() throws {
+        ctx = try makeContext()
+        lib = LibraryService(context: ctx)
+    }
+
+    func ids(_ folder: Folder) -> [UUID] {
+        FolderContents.folderClips(in: folder, sort: .manual, hideLearned: false).map(\.id)
+    }
+
+    @Test func dragOrderIsKept() throws {
+        let turns = try lib.createFolder(named: "Turns", in: nil)
+        let r = try lib.filedRecording()
+        let a = try lib.filedClip("A", in: turns, on: r)
+        let b = try lib.filedClip("B", in: turns, on: r)
+        let c = try lib.filedClip("C", in: turns, on: r)
+        try lib.setClipOrder([c, a, b], in: turns)
+        #expect(ids(turns) == [c.id, a.id, b.id])
+    }
+
+    @Test func newClipsArriveOnTopOfAnArrangedFolder() throws {
+        let turns = try lib.createFolder(named: "Turns", in: nil)
+        let a = try lib.filedClip("A", in: turns)
+        let b = try lib.filedClip("B", in: turns)
+        try lib.setClipOrder([b, a], in: turns)
+        let new = try lib.filedClip("New", in: turns)
+        #expect(ids(turns) == [new.id, b.id, a.id])
+    }
+
+    @Test func movingAClipForgetsItsPlaceInTheOldFolder() throws {
+        let turns = try lib.createFolder(named: "Turns", in: nil)
+        let spins = try lib.createFolder(named: "Spins", in: nil)
+        let a = try lib.filedClip("A", in: spins)
+        let b = try lib.filedClip("B", in: spins)
+        let moved = try lib.filedClip("Moved", in: turns)
+        try lib.setClipOrder([a, b], in: spins)
+        try lib.setClipOrder([moved], in: turns)
+        _ = try lib.dropClip(moved, on: spins)
+        #expect(ids(spins) == [moved.id, a.id, b.id], "it lands on top, not at its old index")
+    }
+
+    @Test func orderOnlyForClipsLivingThere() throws {
+        let turns = try lib.createFolder(named: "Turns", in: nil)
+        let spins = try lib.createFolder(named: "Spins", in: nil)
+        let a = try lib.filedClip("A", in: turns)
+        let elsewhere = try lib.filedClip("B", in: spins)
+        #expect(throws: LibraryError.invalidMoveTarget) { try lib.setClipOrder([a, elsewhere], in: turns) }
+    }
+}

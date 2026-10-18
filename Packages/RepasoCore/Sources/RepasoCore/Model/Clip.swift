@@ -23,6 +23,8 @@ public final class Clip {
     public var recording: Recording?
     /// Where it lives; nil only while its recording is pending.
     public var folder: Folder?
+    /// Its place in its folder once the folder has been arranged by hand; nil until then (and again after it moves).
+    public var folderOrder: Int?
     /// Extra folders it also shows in.
     @Relationship(deleteRule: .nullify, inverse: \Folder.linkedClips) public var linkedFolders: [Folder] = []
 

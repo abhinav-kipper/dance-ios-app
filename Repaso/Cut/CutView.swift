@@ -71,8 +71,13 @@ struct CutView: View {
         VStack(spacing: 12) {
             video(model)
                 .frame(maxHeight: .infinity)
-            Filmstrip(model: model, clips: clips) { clip, range in
-                env.perform { try env.library(ctx).updateRange(clip, start: range.lowerBound, end: range.upperBound) }
+            timeReadout(model)
+            HStack(alignment: .top, spacing: 10) {
+                playButton(model)
+                    .padding(.top, 10)   // centred on the strip, above its hint line
+                Filmstrip(model: model, clips: clips) { clip, range in
+                    env.perform { try env.library(ctx).updateRange(clip, start: range.lowerBound, end: range.upperBound) }
+                }
             }
             .padding(.horizontal, Theme.gutter)
             if onClipMarked != nil {
@@ -111,7 +116,6 @@ struct CutView: View {
                 }
                 .allowsHitTesting(false)
             if onDone == nil { topBar(model) }   // in the import guide, the guide's own bar sits here
-            if !model.missingFile { videoControls(model) }
         }
         .clipShape(UnevenRoundedRectangle(bottomLeadingRadius: 34, bottomTrailingRadius: 34, style: .continuous))
         .offset(y: closeDrag)
@@ -165,38 +169,35 @@ struct CutView: View {
 
     // MARK: Controls
 
-    /// Over the bottom of the video, like the Player: where you are on the left, play/pause on the right.
-    private func videoControls(_ model: CutModel) -> some View {
-        VStack {
-            Spacer()
-            HStack(alignment: .bottom) {
-                HStack(spacing: 4) {
-                    Text(TimeFormat.precise(model.time))
-                        .foregroundStyle(Theme.textPrimary)
-                    Text("/ \(TimeFormat.precise(model.duration))")
-                        .foregroundStyle(Theme.textSecondary)
-                }
-                .font(Theme.mono(14, weight: .semibold))
-                .monospacedDigit()
-                .padding(.horizontal, 12)
-                .frame(height: 36)
-                .glassEffect(.regular.tint(Theme.overVideoTint), in: Capsule())
-                .accessibilityElement(children: .ignore)
-                .accessibilityLabel("\(TimeFormat.precise(model.time)) of \(TimeFormat.precise(model.duration))")
-                Spacer()
-                Button { model.togglePlay() } label: {
-                    Image(systemName: model.isPlaying ? "pause.fill" : "play.fill")
-                        .font(.system(size: 20, weight: .bold))
-                        .foregroundStyle(Theme.textPrimary)
-                        .contentTransition(.symbolEffect(.replace))
-                        .frame(width: 52, height: 52)
-                }
-                .controlGlass(in: Circle(), tint: Theme.overVideoTint)
-                .accessibilityLabel(model.isPlaying ? "Pause" : "Play")
-            }
-            .padding(.horizontal, 16)
-            .padding(.bottom, 16)
+    /// Where the playhead is, centred over the strip like a video editor's timecode.
+    private func timeReadout(_ model: CutModel) -> some View {
+        HStack(spacing: 6) {
+            Text(TimeFormat.precise(model.time))
+                .foregroundStyle(Theme.textPrimary)
+            Text("/")
+                .foregroundStyle(Theme.textSecondary.opacity(0.6))
+            Text(TimeFormat.precise(model.duration))
+                .foregroundStyle(Theme.textSecondary)
         }
+        .font(Theme.mono(13, weight: .semibold))
+        .monospacedDigit()
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(TimeFormat.precise(model.time)) of \(TimeFormat.precise(model.duration))")
+        .accessibilityAddTraits([.isStaticText, .updatesFrequently])
+    }
+
+    /// Play / pause at the start of the strip it drives.
+    private func playButton(_ model: CutModel) -> some View {
+        Button { model.togglePlay() } label: {
+            Image(systemName: model.isPlaying ? "pause.fill" : "play.fill")
+                .font(.system(size: 18, weight: .bold))
+                .foregroundStyle(Theme.textPrimary)
+                .contentTransition(.symbolEffect(.replace))
+                .frame(width: 48, height: 48)
+        }
+        .controlGlass(in: Circle())
+        .disabled(model.missingFile)
+        .accessibilityLabel(model.isPlaying ? "Pause" : "Play")
     }
 
     private func markButton(_ model: CutModel) -> some View {

@@ -38,7 +38,7 @@ enum ClipRemover {
                     env.showToast("Couldn't save", seconds: 2.2)
                 }
             } catch {
-                env.showToast("Couldn't save the other clips. Nothing was deleted.", seconds: 3)
+                env.showToast("Couldn't delete", seconds: 2.2)
             }
         }
     }

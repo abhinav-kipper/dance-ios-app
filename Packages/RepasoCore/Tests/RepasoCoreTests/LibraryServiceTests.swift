@@ -36,15 +36,6 @@ struct LibraryServiceTests {
         #expect(throws: LibraryError.invalidMoveTarget) { try lib.moveFolder(a, to: a) }
     }
 
-    @Test func reorderSwapsWithNeighbour() throws {
-        let a = try lib.createFolder(named: "A", in: nil)
-        let b = try lib.createFolder(named: "B", in: nil)
-        try lib.reorderFolder(b, by: 1)
-        #expect(a.sortIndex == 0 && b.sortIndex == 1)
-        try lib.reorderFolder(b, by: 1)
-        #expect(b.sortIndex == 1)
-    }
-
     @Test func deleteContentsDeletesClipsLivingThere() throws {
         let turns = try lib.createFolder(named: "Turns", in: nil)
         let sub = try lib.createFolder(named: "Sub", in: turns)

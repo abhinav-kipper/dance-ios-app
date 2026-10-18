@@ -16,7 +16,6 @@ final class AppEnvironment {
     let videos: VideoStore
     let thumbnails: ThumbnailStore
     let importer = ImportCoordinator()
-    let drag = DragState()
     let previews = PreviewCoordinator()
     /// Set by a toast's Open button; Home navigates there.
     var pendingRoute: [Route]?

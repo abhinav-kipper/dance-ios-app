@@ -45,9 +45,9 @@ struct SearchView: View {
     @ViewBuilder
     private func resultsContent(_ results: LibrarySearch.Results) -> some View {
         if query.trimmingCharacters(in: .whitespaces).isEmpty {
-            hint("Search clips, teachers, notes and folders.")
+            EmptyView()
         } else if results.isEmpty {
-            hint("Nothing matches “\(query)”.")
+            hint("No results")
         } else {
             if !results.clips.isEmpty { clipSection(results.clips) }
             if !results.folders.isEmpty { folderSection(results.folders) }

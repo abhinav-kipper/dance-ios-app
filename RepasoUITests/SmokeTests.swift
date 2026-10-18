@@ -11,7 +11,7 @@ final class SmokeTests: XCTestCase {
         app.launchArguments = ["-uiTesting"]
         app.launch()
 
-        XCTAssertTrue(app.staticTexts["Import your first class video"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["No videos yet"].waitForExistence(timeout: 5))
         app.buttons["New folder"].tap()
 
         let field = app.textFields["Folder name"]

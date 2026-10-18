@@ -35,13 +35,18 @@ public enum FolderContents {
         let home = folder.clips.filter(\.isFiled)
         var seen = Set(home.map(\.id))
         let linked = folder.linkedClips.filter { $0.isFiled && seen.insert($0.id).inserted }
-        return ordered(filter(home, hideLearned: hideLearned), by: sort)
+        return ordered(filter(home, hideLearned: hideLearned), by: sort, arranged: true)
             + ordered(filter(linked, hideLearned: hideLearned), by: sort)
     }
 
-    /// Manual order groups clips by video (newest video first), then in the order they were cut.
-    static func ordered(_ clips: [Clip], by sort: ClipSort) -> [Clip] {
+    /// Manual order: clips arranged by hand keep their places, below any that arrived since; the rest are grouped by
+    /// video (newest video first), then in the order they were cut. `arranged` only for the folder they live in.
+    static func ordered(_ clips: [Clip], by sort: ClipSort, arranged: Bool = false) -> [Clip] {
         guard sort == .manual else { return sortClips(clips, by: sort) }
+        if arranged {
+            let placed = clips.filter { $0.folderOrder != nil }.sorted { ($0.folderOrder ?? 0) < ($1.folderOrder ?? 0) }
+            return ordered(clips.filter { $0.folderOrder == nil }, by: sort) + placed
+        }
         return clips.sorted { a, b in
             let da = a.recording.map { $0.recordedAt ?? $0.importedAt } ?? .distantPast
             let db = b.recording.map { $0.recordedAt ?? $0.importedAt } ?? .distantPast

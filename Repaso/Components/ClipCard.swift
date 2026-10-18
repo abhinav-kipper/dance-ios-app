@@ -2,16 +2,15 @@ import SwiftUI
 import RepasoCore
 
 /// A clip as a tall preview card in a folder's grid: live poster, name on a soft gradient, duration, and small
-/// favorite / learned marks. Tap plays; press and hold opens the menu, or drags while arranging.
+/// favorite / learned marks. Tap plays; press and hold opens the menu, or picks it up while arranging.
 struct ClipCard: View {
     let clip: Clip
     let actions: ClipActions
     var isArranging = false
-    var dragOrigin: UUID?
+    /// Picked up in Arrange (drawn by `arrangeItem`; the card only stops its live preview).
+    var isLifted = false
     /// Set when the clip shows in this folder through a link: the name of where it lives.
     var linkedHome: String?
-    @Environment(AppEnvironment.self) private var env
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         Button {
@@ -35,12 +34,8 @@ struct ClipCard: View {
         }
         .buttonStyle(PressableButtonStyle())
         .accessibilityLabel(accessibilityText)
-        .accessibilityHint(isArranging ? "Press and hold, then drag onto a folder" : "Plays the clip")
-        .opacity(isLifted ? 0.28 : 1)
-        .scaleEffect(isLifted ? 0.96 : 1)
-        .animation(Theme.spring, value: isLifted)
+        .accessibilityHint(isArranging ? "Hold and drag to move" : "Plays the clip")
         .jiggle(isArranging && !isLifted)
-        .modifier(ClipDragSource(clip: clip, drag: env.drag, origin: dragOrigin, isEnabled: isArranging, reduceMotion: reduceMotion))
         .modifier(MenuUnlessArranging(isArranging: isArranging) {
             ClipMenuItems(clip: clip, actions: actions, linkedHome: linkedHome)
         })
@@ -83,8 +78,6 @@ struct ClipCard: View {
         .background(clip.isFavorite || clip.isLearned ? .black.opacity(0.45) : .clear, in: Capsule())
         .padding(8)
     }
-
-    private var isLifted: Bool { env.drag.active?.id == clip.id }
 
     private var accessibilityText: String {
         var parts = [clip.name, TimeFormat.duration(clip.length)]

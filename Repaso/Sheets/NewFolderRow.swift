@@ -39,8 +39,6 @@ struct NewFolderRow: View {
                 Button("Create") { create(in: nil) }
             }
             Button("Cancel", role: .cancel) {}
-        } message: {
-            Text(suggestedParent.map { "Inside \($0.name), or on Home." } ?? "It goes on Home.")
         }
     }
 

@@ -19,17 +19,17 @@ struct FolderView: View {
     @State private var sheet: LibrarySheet?
     @State private var player: PlayerRequest?
     @State private var cutting: CutRequest?
-    /// Arrange mode: press-and-hold drags clips onto folders instead of opening their menu.
+    /// Arrange mode: press-and-hold drags clips and folders (to reorder, or a clip onto a folder) instead of
+    /// opening their menu.
     @State private var arranging = false
+    @State private var clipArrange = ArrangeSession()
+    @State private var folderArrange = ArrangeSession()
     @State private var deletingClip: Clip?
     @State private var picks: [PhotosPickerItem] = []
     @State private var showPicker = false
     @State private var editingFolderID: UUID?
-    @State private var hoveredFolderID: UUID?
-    @State private var springTask: Task<Void, Never>?
     @State private var absorbCounts: [UUID: Int] = [:]
     @State private var dropSuccess = 0
-    @State private var springLoads = 0
 
     init(folderID: UUID, path: Binding<[Route]>) {
         self.folderID = folderID
@@ -58,35 +58,23 @@ struct FolderView: View {
             VStack(alignment: .leading, spacing: 22) {
                 header
                 subfolderSection
-                if !clips.isEmpty { chips }   // they act on the clips, so they sit right above them
+                if !clips.isEmpty || subfolders.count > 1 { chips }   // they act on what's below, so they sit above it
                 clipsSection
             }
             .padding(.horizontal, Theme.gutter)
             .padding(.bottom, 140)
+            .coordinateSpace(.named(ArrangeSession.space))
         }
         .scrollDismissesKeyboard(.interactively)
+        .scrollDisabled(clipArrange.isActive || folderArrange.isActive)   // a card is up: the finger moves it
         .onScrollPhaseChange { _, phase in
             env.previews.setScrolling(fast: phase == .decelerating || phase == .animating)
-        }
-        // Catcher: a clip carried in from another screen (spring-loading) can be dropped anywhere here.
-        .dragTarget(env.drag) { ref in
-            guard let folder, env.drag.origin != folder.id else { return false }
-            return drop(ref, on: folder)
         }
         .background(Theme.bg.ignoresSafeArea())
         .overlay(alignment: .bottom) {
             FloatingPill(title: "Import", systemImage: "square.and.arrow.down") { showPicker = true }
         }
-        .overlay(alignment: .top) { dropBanner }
-        .animation(Theme.spring, value: showDropBanner)
         .sensoryFeedback(.success, trigger: dropSuccess)
-        .sensoryFeedback(.impact(weight: .light), trigger: springLoads)
-        .onChange(of: env.drag.active) { _, active in
-            if active == nil {
-                springTask?.cancel()
-                hoveredFolderID = nil
-            }
-        }
         .toolbar(.hidden, for: .navigationBar)
         .photosPicker(isPresented: $showPicker, selection: $picks, matching: .importableVideos,
                          preferredItemEncoding: .current, photoLibrary: .shared())
@@ -95,7 +83,7 @@ struct FolderView: View {
             env.startImport(new, from: folder, context: ctx)
             picks = []
         }
-        .onChange(of: clips.isEmpty) { _, empty in if empty { arranging = false } }
+        .onChange(of: clips.isEmpty && subfolders.count < 2) { _, nothing in if nothing { arranging = false } }
         .onChange(of: matches.isEmpty) { _, gone in
             if gone { dismiss() }   // folder deleted while open
         }
@@ -164,36 +152,32 @@ struct FolderView: View {
             }
             .buttonStyle(PressableButtonStyle())
             .accessibilityAddTraits(hideLearned ? .isSelected : [])
-            if !clips.isEmpty {
+            if !clips.isEmpty || subfolders.count > 1 {
                 Button {
+                    if !arranging { sortRaw = ClipSort.manual.rawValue }   // the order being arranged is the manual one
                     withAnimation(Theme.spring) { arranging.toggle() }
                 } label: {
                     Chip(title: arranging ? "Done" : "Arrange", systemImage: arranging ? "checkmark" : "hand.draw",
                          isOn: arranging)
                 }
                 .buttonStyle(PressableButtonStyle())
-                .accessibilityLabel(arranging ? "Done arranging" : "Arrange: drag clips onto folders")
+                .accessibilityLabel(arranging ? "Done arranging" : "Arrange clips and folders")
             }
         }
     }
 
     private var subfolderSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Group {
-                if isClipDragActive {
-                    Text("Drop on a folder").sectionLabelStyle(Theme.rose)
-                } else {
-                    Text("Folders").sectionLabelStyle()
-                }
-            }
-            .animation(.easeOut(duration: 0.2), value: isClipDragActive)
+            Text(clipArrange.isActive ? "Drop on a folder" : "Folders")
+                .sectionLabelStyle(clipArrange.isActive ? Theme.rose : Theme.textSecondary)
+                .animation(.easeOut(duration: 0.2), value: clipArrange.isActive)
             LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 3), spacing: 10) {
-                ForEach(subfolders) { sub in
+                ForEach(folderArrange.arranged(subfolders)) { sub in
                     let editing = Binding(
                         get: { editingFolderID == sub.id },
                         set: { if !$0 { editingFolderID = nil } })
                     Group {
-                        if editingFolderID == sub.id {
+                        if editingFolderID == sub.id || arranging {
                             dropCard(sub, editing: editing)
                         } else {
                             NavigationLink(value: Route.folder(sub.id)) {
@@ -202,26 +186,32 @@ struct FolderView: View {
                             .buttonStyle(PressableButtonStyle())
                         }
                     }
-                    .zIndex(hoveredFolderID == sub.id ? 1 : 0)
-                    .dragTarget(env.drag, isTargeted: { hover(sub, $0) }) { ref in
-                        hoveredFolderID = nil
-                        return drop(ref, on: sub)
+                    .zIndex(clipArrange.hoveredTarget == sub.id ? 1 : 0)
+                    .arrangeTarget(sub.id, in: clipArrange)
+                    .jiggle(arranging && folderArrange.dragging != sub.id)
+                    .arrangeItem(sub.id, in: folderArrange, items: subfolders.map(\.id), enabled: arranging) { outcome in
+                        guard case .reordered(let ids) = outcome else { return }
+                        let byID = Dictionary(subfolders.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+                        env.perform { try env.library(ctx).setFolderOrder(ids.compactMap { byID[$0] }) }
                     }
-                    .contextMenu {
+                    .modifier(MenuUnlessArranging(isArranging: arranging) {
                         Button("Rename", systemImage: "pencil") { editingFolderID = sub.id }
                         Button("Move", systemImage: "folder") { sheet = .move(.folder(sub)) }
                         Button("Delete", systemImage: "trash", role: .destructive) { requestDelete(sub) }
+                    })
+                }
+                if !arranging {
+                    Button(action: newSubfolder) {
+                        RoundedRectangle(cornerRadius: 18, style: .continuous)
+                            .strokeBorder(.white.opacity(0.25), style: StrokeStyle(lineWidth: 1.5, dash: [6, 5]))
+                            .overlay(Image(systemName: "plus").font(.system(size: 20, weight: .semibold)).foregroundStyle(Theme.textSecondary))
+                            .frame(minHeight: 132)
                     }
+                    .buttonStyle(PressableButtonStyle())
+                    .accessibilityLabel("New subfolder")
                 }
-                Button(action: newSubfolder) {
-                    RoundedRectangle(cornerRadius: 18, style: .continuous)
-                        .strokeBorder(.white.opacity(0.25), style: StrokeStyle(lineWidth: 1.5, dash: [6, 5]))
-                        .overlay(Image(systemName: "plus").font(.system(size: 20, weight: .semibold)).foregroundStyle(Theme.textSecondary))
-                        .frame(minHeight: 132)
-                }
-                .buttonStyle(PressableButtonStyle())
-                .accessibilityLabel("New subfolder")
             }
+            .animation(Theme.motion(reduceMotion), value: folderArrange.order)
         }
     }
 
@@ -229,28 +219,24 @@ struct FolderView: View {
     private var clipsSection: some View {
         if !clips.isEmpty {
             VStack(alignment: .leading, spacing: 12) {
-                HStack {
-                    Text("Clips").sectionLabelStyle()
-                    Spacer()
-                    if arranging {
-                        Text("Hold a clip, then drag it onto a folder")
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundStyle(Theme.rose)
-                            .transition(.opacity)
-                    }
-                }
+                Text("Clips").sectionLabelStyle()
                 LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)], spacing: 12) {
-                    ForEach(Array(clips.enumerated()), id: \.element.id) { i, clip in
-                        ClipCard(clip: clip, actions: clipActions, isArranging: arranging, dragOrigin: folderID,
-                                 linkedHome: linkedHome(of: clip))
+                    ForEach(Array(clipArrange.arranged(clips).enumerated()), id: \.element.id) { i, clip in
+                        let linked = linkedHome(of: clip)
+                        ClipCard(clip: clip, actions: clipActions, isArranging: arranging && linked == nil,
+                                 isLifted: clipArrange.dragging == clip.id, linkedHome: linked)
+                            .arrangeItem(clip.id, in: clipArrange, items: homeClipIDs, enabled: arranging && linked == nil) {
+                                finishClipArrange($0)
+                            }
                             .riseIn(i)
                             .transition(.asymmetric(insertion: .opacity, removal: .scale(scale: 0.6).combined(with: .opacity)))
                     }
                 }
                 .animation(Theme.spring, value: clips.map(\.id))
+                .animation(Theme.motion(reduceMotion), value: clipArrange.order)
             }
         } else if subfolders.isEmpty {
-            Text("No clips here yet. Tap Import, or move clips here.")
+            Text("No clips yet")
                 .font(.system(size: 15))
                 .foregroundStyle(Theme.textSecondary)
                 .padding(.top, 8)
@@ -276,7 +262,10 @@ struct FolderView: View {
                 guard let recording = clip.recording else { return }
                 cutting = CutRequest(recording: recording, focusClipID: clip.id)
             },
-            arrange: subfolders.isEmpty ? nil : { withAnimation(Theme.spring) { arranging = true } })
+            arrange: {
+                sortRaw = ClipSort.manual.rawValue
+                withAnimation(Theme.spring) { arranging = true }
+            })
     }
 
     // MARK: Links
@@ -306,72 +295,39 @@ struct FolderView: View {
         }
     }
 
-    // MARK: Drag and drop
+    // MARK: Arrange
 
-    private var isClipDragActive: Bool { env.drag.active?.kind == .clip }
-
-    /// A clip dragged in from another folder screen can be dropped anywhere on this one.
-    private var showDropBanner: Bool {
-        guard let folder, isClipDragActive else { return false }
-        return env.drag.origin != folder.id
-    }
-
-    @ViewBuilder
-    private var dropBanner: some View {
-        if showDropBanner, let folder {
-            Label("Drop to file in \(folder.name)", systemImage: "arrow.down.to.line")
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundStyle(Theme.onAccent)
-                .padding(.horizontal, 18)
-                .frame(height: 44)
-                .background(Theme.rose, in: Capsule())
-                .padding(.top, 8)
-                .transition(.move(edge: .top).combined(with: .opacity))
-                .allowsHitTesting(false)
-        }
-    }
+    /// Clips that live here (linked ones keep their place at the end).
+    private var homeClipIDs: [UUID] { clips.filter { linkedHome(of: $0) == nil }.map(\.id) }
 
     private func dropCard(_ sub: Folder, editing: Binding<Bool>) -> some View {
-        SubfolderDropCard(folder: sub, isEditingName: editing, isClipDragActive: isClipDragActive,
-                          isHovered: hoveredFolderID == sub.id, absorbCount: absorbCounts[sub.id, default: 0])
+        SubfolderDropCard(folder: sub, isEditingName: editing, isClipDragActive: clipArrange.isActive,
+                          isHovered: clipArrange.hoveredTarget == sub.id, absorbCount: absorbCounts[sub.id, default: 0])
     }
 
-    /// Hover starts the 0.9s spring-load: if still hovered, the folder opens with the drag in hand.
-    private func hover(_ sub: Folder, _ isTargeted: Bool) {
-        guard isClipDragActive else { return }
-        springTask?.cancel()
-        guard isTargeted else {
-            if hoveredFolderID == sub.id { hoveredFolderID = nil }
-            return
-        }
-        hoveredFolderID = sub.id
-        springTask = Task {
-            try? await Task.sleep(for: .seconds(0.9))
-            guard !Task.isCancelled, hoveredFolderID == sub.id else { return }
-            hoveredFolderID = nil
-            springLoads += 1
-            path.append(.folder(sub.id))
-        }
-    }
-
-    private func drop(_ ref: DragRef, on target: Folder) -> Bool {
-        springTask?.cancel()
-        guard ref.kind == .clip, let clip = fetchClip(ref.id) else { return false }
+    /// The end of a clip drag: a new order, or the clip filed in the folder it was let go over.
+    private func finishClipArrange(_ outcome: ArrangeSession.Outcome) {
+        guard let folder else { return }
         let lib = env.library(ctx)
-        var receipt: ClipMoveReceipt?
-        env.perform { receipt = try withAnimation(Theme.spring) { try lib.dropClip(clip, on: target) } }
-        guard let receipt else { return false }
-        if !reduceMotion { absorbCounts[target.id, default: 0] += 1 }
-        dropSuccess += 1
-        let env = env
-        env.showToast("Moved to \(target.name)") {
-            env.perform { try withAnimation(Theme.spring) { try lib.undo(receipt) } }
+        switch outcome {
+        case .reordered(let ids):
+            let byID = Dictionary(clips.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+            env.perform { try lib.setClipOrder(ids.compactMap { byID[$0] }, in: folder) }
+        case .dropped(let clipID, let targetID):
+            guard let clip = clips.first(where: { $0.id == clipID }),
+                  let target = subfolders.first(where: { $0.id == targetID }) else { return }
+            var receipt: ClipMoveReceipt?
+            env.perform { receipt = try lib.dropClip(clip, on: target) }
+            guard let receipt else { return }
+            if !reduceMotion { absorbCounts[target.id, default: 0] += 1 }
+            dropSuccess += 1
+            let env = env
+            env.showToast("Moved to \(target.name)") {
+                env.perform { try withAnimation(Theme.spring) { try lib.undo(receipt) } }
+            }
+        case .none:
+            break
         }
-        return true
-    }
-
-    private func fetchClip(_ id: UUID) -> Clip? {
-        try? ctx.fetch(FetchDescriptor<Clip>(predicate: #Predicate { $0.id == id })).first
     }
 
     private func requestDelete(_ sub: Folder) {
@@ -424,7 +380,7 @@ struct FavoritesView: View {
                     Chip(title: "Sort", systemImage: "arrow.up.arrow.down")
                 }
                 if clips.isEmpty {
-                    Text("Tap the star on a clip to add it here.")
+                    Text("No favorites yet")
                         .font(.system(size: 15))
                         .foregroundStyle(Theme.textSecondary)
                 } else {
