@@ -18,6 +18,7 @@ struct RepasoApp: App {
     /// UI tests use an empty in-memory store; the orphan sweep would then delete every real video.
     private let uiTesting = ProcessInfo.processInfo.arguments.contains("-uiTesting")
     @State private var env: AppEnvironment
+    @Environment(\.scenePhase) private var scenePhase
 
     init() {
         do {
@@ -46,7 +47,17 @@ struct RepasoApp: App {
                     if !uiTesting { env.sweepOrphans(container.mainContext) }
                     ShareSheet.clearExports()
                 }
+                // Videos shared from Photos land in the App Group inbox; the extension opens repaso://inbox.
+                .onOpenURL { _ in importShared() }
+                .onChange(of: scenePhase, initial: true) { _, phase in
+                    if phase == .active { importShared() }
+                }
         }
         .modelContainer(container)
+    }
+
+    private func importShared() {
+        guard !uiTesting else { return }
+        env.importShared(context: container.mainContext)
     }
 }

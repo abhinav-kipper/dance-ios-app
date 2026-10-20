@@ -70,6 +70,11 @@ final class ImportGuideModel: Identifiable {
         if let first = recordings.first { enter(first) }
     }
 
+    /// Adds more videos to the end of the queue (shared from another app while the guide is open).
+    func append(picks: [ImportCoordinator.Item.ID]) {
+        queue += picks.map(Entry.pick)
+    }
+
     // MARK: Where we are
 
     var position: (index: Int, count: Int) { (index, queue.count) }

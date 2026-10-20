@@ -48,6 +48,20 @@ final class AppEnvironment {
         guide = ImportGuideModel(picks: ids, env: self, context: context)
     }
 
+    /// Imports videos the Share extension left in the App Group inbox and opens the guide on them (or adds them to
+    /// the guide already open).
+    func importShared(context: ModelContext) {
+        guard let inbox = ShareInbox.appGroup() else { return }
+        let files = inbox.drain(into: FileManager.default.temporaryDirectory.appendingPathComponent("Shared", isDirectory: true))
+        guard !files.isEmpty else { return }
+        let ids = importer.start(files: files, context: context, env: self)
+        if let guide, !guide.isClosed {
+            guide.append(picks: ids)
+        } else {
+            guide = ImportGuideModel(picks: ids, env: self, context: context)
+        }
+    }
+
     /// Opens the guide on a video waiting in Unsorted.
     func resume(_ recording: Recording, context: ModelContext) {
         guide = ImportGuideModel(resuming: [recording], env: self, context: context)

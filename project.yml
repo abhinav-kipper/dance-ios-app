@@ -21,6 +21,11 @@ targets:
     sources: [Repaso]
     dependencies:
       - package: RepasoCore
+      - target: RepasoShare
+    entitlements:
+      path: Repaso/Resources/Repaso.entitlements
+      properties:
+        com.apple.security.application-groups: [group.com.amudgal.repaso]
     info:
       path: Repaso/Resources/Info.plist
       properties:
@@ -34,11 +39,40 @@ targets:
         UIUserInterfaceStyle: Dark
         NSPhotoLibraryUsageDescription: "Repaso imports your class videos so you can cut and practice clips, and removes them from Photos after import when you ask."
         ITSAppUsesNonExemptEncryption: false
+        # The Share extension opens repaso://inbox once a shared video is in the App Group inbox.
+        CFBundleURLTypes:
+          - CFBundleURLName: com.amudgal.repaso
+            CFBundleURLSchemes: [repaso]
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.amudgal.repaso
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+  RepasoShare:
+    type: app-extension
+    platform: iOS
+    sources: [RepasoShare]
+    dependencies:
+      - package: RepasoCore
+    entitlements:
+      path: RepasoShare/RepasoShare.entitlements
+      properties:
+        com.apple.security.application-groups: [group.com.amudgal.repaso]
+    info:
+      path: RepasoShare/Info.plist
+      properties:
+        CFBundleDisplayName: Repaso
+        CFBundleShortVersionString: "0.1.0"
+        CFBundleVersion: "1"
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.share-services
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).ShareViewController
+          NSExtensionAttributes:
+            NSExtensionActivationRule:
+              NSExtensionActivationSupportsMovieWithMaxCount: 20
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.amudgal.repaso.share
   RepasoUITests:
     type: bundle.ui-testing
     platform: iOS

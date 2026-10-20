@@ -16,8 +16,14 @@ final class ImportCoordinator {
             case failed(String)
         }
 
+        /// A Photos picker pick, or a video handed over by the Share extension (already in our temp directory).
+        enum Source {
+            case pick(PhotosPickerItem)
+            case file(URL)
+        }
+
         let id = UUID()
-        let pick: PhotosPickerItem
+        let source: Source
         var state: State = .waiting
         var poster: ThumbnailRequest?
         /// Photos asset id, for the delete-from-Photos offer (needs the picker's `photoLibrary: .shared()`).
@@ -35,7 +41,18 @@ final class ImportCoordinator {
     func start(_ picks: [PhotosPickerItem], context: ModelContext, env: AppEnvironment) -> [Item.ID] {
         guard !picks.isEmpty else { return [] }
         if !isRunning { items.removeAll { $0.state == .done || $0.state.isFailed } }
-        let new = picks.map { Item(pick: $0, assetID: $0.itemIdentifier) }
+        return enqueue(picks.map { Item(source: .pick($0), assetID: $0.itemIdentifier) }, context: context, env: env)
+    }
+
+    /// Starts importing videos shared from another app (no Photos asset id, so no delete-from-Photos offer).
+    @discardableResult
+    func start(files: [URL], context: ModelContext, env: AppEnvironment) -> [Item.ID] {
+        guard !files.isEmpty else { return [] }
+        if !isRunning { items.removeAll { $0.state == .done || $0.state.isFailed } }
+        return enqueue(files.map { Item(source: .file($0)) }, context: context, env: env)
+    }
+
+    private func enqueue(_ new: [Item], context: ModelContext, env: AppEnvironment) -> [Item.ID] {
         items += new
         run(context: context, env: env)
         return new.map(\.id)
@@ -61,7 +78,7 @@ final class ImportCoordinator {
 
     private func process(at index: Int, context: ModelContext, env: AppEnvironment) async {
         let id = items[index].id
-        let pick = items[index].pick
+        let source = items[index].source
         let assetID = items[index].assetID
         func update(_ change: (inout Item) -> Void) {
             if let j = items.firstIndex(where: { $0.id == id }) { change(&items[j]) }
@@ -69,12 +86,19 @@ final class ImportCoordinator {
 
         update { $0.state = .copying(0.05) }
         do {
-            guard let transfer = try await pick.loadTransferable(type: VideoTransfer.self) else {
-                throw ImportError.unreadable
+            let url: URL
+            switch source {
+            case .pick(let pick):
+                guard let transfer = try await pick.loadTransferable(type: VideoTransfer.self) else {
+                    throw ImportError.unreadable
+                }
+                url = transfer.url
+            case .file(let file):
+                url = file
             }
             update { $0.state = .copying(0.7) }
-            let meta = try await VideoMetadata.load(transfer.url)
-            let fileName = try env.videos.adopt(fileAt: transfer.url)
+            let meta = try await VideoMetadata.load(url)
+            let fileName = try env.videos.adopt(fileAt: url)
             let recording = try env.library(context).addRecording(fileName: fileName, duration: meta.duration,
                                                                   recordedAt: meta.recordedAt, photosAssetID: assetID)
             update {
